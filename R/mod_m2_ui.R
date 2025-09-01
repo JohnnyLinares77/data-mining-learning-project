@@ -29,10 +29,6 @@ mod_m2_ui <- function(id){
           ),
           selected = c("edad","ingreso_declarado","rfm","score_buro")
         ),
-        shiny::tags$hr(),
-        shiny::actionButton(ns("train_models"), "Entrenar Modelos (Logit)"),
-        shiny::br(), shiny::br(),
-        shiny::actionButton(ns("eval_thresholds"), "Evaluar Umbrales (score integrado)")
       ),
 
       # -------------------------
@@ -57,7 +53,9 @@ mod_m2_ui <- function(id){
               shiny::tags$li("Entrena los modelos logísticos de aceptación y mora."),
               shiny::tags$li("Revisa la significancia de coeficientes (p-valores) y el AUC."),
               shiny::tags$li("Evalúa métricas por umbral y elige el que optimiza tu objetivo."),
-              shiny::tags$li("Confirma y exporta resultados para módulos posteriores.")
+              shiny::tags$li("Confirma y exporta resultados para módulos posteriores."),
+            shiny::tags$hr(),
+            shiny::actionButton(ns("train_models"), "Entrenar Modelos (Logit)")
             )
           ),
 
@@ -78,11 +76,14 @@ mod_m2_ui <- function(id){
           ),
 
           # ---- Tab 2: Umbral
+
           shiny::tabPanel(
             title = "Umbral",
             shiny::h4("Selección de umbral sobre el score integrado"),
             shiny::p("El score integrado favorece alta aceptación y bajo riesgo: score = p(aceptar) × (1 − p(mora)). 
                      Ajusta el umbral y compara métricas."),
+            shiny::br(), shiny::br(),
+            shiny::actionButton(ns("eval_thresholds"), "Evaluar Umbrales (score integrado)"),
             shiny::sliderInput(ns("thr"), "Umbral de decisión", min = 0, max = 1, value = 0.5, step = 0.01),
             shiny::actionButton(ns("apply_thr"), "Aplicar umbral"),
             shiny::br(), shiny::br(),

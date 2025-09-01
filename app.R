@@ -25,7 +25,7 @@ source("R/mod_m2_server.R")
 
 # ---------------- UI ----------------
 ui <- navbarPage(
-  title = "Tesis - Módulos",
+  title = "Simulación Campaña Préstamos",
   tabPanel("Módulo 1: Perfilamiento", mod_m1_ui("m1")),
   tabPanel("Módulo 2: Scoring",       mod_m2_ui("m2"))
 )
