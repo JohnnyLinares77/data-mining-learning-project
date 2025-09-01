@@ -3,8 +3,7 @@
 # Server del Módulo 2 – Scoring (Regresión Logística)
 # Requiere: logit_helpers.R, persistencia_m2.R y (opcionalmente) preprocess_inputs() del Módulo 1
 # Argumentos:
-#   - datos_reactivos: reactive() que retorna una lista con data.frames base
-#     (demograficas, financieras, comp_historico, clientes, etc.)
+#   - datos_reactivos: reactive() que retorna una lista con data.frames base (demograficas, financieras, comp_historico, clientes, etc.)
 #   - id_sim: identificador de simulación (string o número)
 # -------------------------------------------------------------------
 
@@ -15,28 +14,20 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
   # Utilitarios internos
   # ----------------------------
   get_base_df <- function(d){
-    # Si ya existe un data.frame unificado, úsalo; si no, intenta unir por id_cliente
+    # Une componentes clave por id_cliente (incluye 'clientes' para cluster_id)
     if (!is.null(d$base)) return(d$base)
-    keys <- c("demograficas","financieras","comp_historico","clientes")  # <-- incluye clientes (cluster_id)
+    keys <- c("demograficas","financieras","comp_historico","clientes")
     tabs <- Filter(Negate(is.null), d[keys])
     if (length(tabs) == 0) stop("No se encontraron tablas base en datos_reactivos().")
-    base <- Reduce(function(a,b) merge(a,b, by = "id_cliente", all = TRUE), tabs)
-
-    # Forzar cluster_id como factor si existe
-    if ("cluster_id" %in% names(base)) base$cluster_id <- factor(base$cluster_id)
-    base
+    Reduce(function(a,b) merge(a,b, by = "id_cliente", all = TRUE), tabs)
   }
 
-  # construye matriz de diseño (numéricas estandarizadas + dummies)
+  # construye matriz de diseño (numéricas estandarizadas + dummies) y deja mapa termino->variable
   make_design <- function(df, vars, id_col = "id_cliente"){
     stopifnot(id_col %in% names(df))
     keep <- intersect(vars, names(df))
     if (length(keep) == 0) stop("No hay variables disponibles en los datos con los nombres seleccionados.")
-
     X <- df[, keep, drop = FALSE]
-
-    # Asegurar que cluster_id (si está) sea factor para generar dummies
-    if ("cluster_id" %in% names(X)) X$cluster_id <- factor(X$cluster_id)
 
     # numéricas -> escalar; categóricas -> factor y one-hot
     is_num <- sapply(X, is.numeric)
@@ -44,34 +35,51 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
     X_cat <- X[, !is_num, drop = FALSE]
 
     if (ncol(X_num) > 0) {
-      X_num <- scale(X_num)
-      X_num <- as.data.frame(X_num)
+      # ignora columnas constantes para evitar NaNs en scale
+      const <- vapply(X_num, function(z) length(unique(z[!is.na(z)])) <= 1, logical(1))
+      if (any(const)) X_num <- X_num[, !const, drop = FALSE]
+      if (ncol(X_num) > 0) {
+        X_num <- scale(X_num)
+        X_num <- as.data.frame(X_num)
+      }
     }
     if (ncol(X_cat) > 0) {
       X_cat <- lapply(X_cat, function(z) as.factor(z))
-      X_cat <- stats::model.matrix(~ . - 1, data = as.data.frame(X_cat))
-      X_cat <- as.data.frame(X_cat)
+      M <- stats::model.matrix(~ . - 1, data = as.data.frame(X_cat))
+      X_cat <- as.data.frame(M)
     }
 
     X_final <- cbind(X_num, X_cat)
+
+    # mapa termino->variable base
+    term_map <- setNames(rep(colnames(X_num), times = 1), colnames(X_num))
+    if (ncol(X_cat) > 0) {
+      for (v in names(df[, keep, drop = FALSE])) {
+        if (!is.numeric(df[[v]])) {
+          ind <- grep(paste0("^", v), colnames(X_cat))
+          if (length(ind) > 0) {
+            term_map <- c(term_map, setNames(rep(v, length(ind)), colnames(X_cat)[ind]))
+          }
+        }
+      }
+    }
+
     attr(X_final, "id_cliente") <- df[[id_col]]
+    attr(X_final, "term_map")   <- term_map
     X_final
   }
 
   # Si no existen etiquetas reales, simula aceptación y mora con una relación plausible
   simular_etiquetas <- function(df){
-    # heurística simple usando variables frecuentes
-    s_buro   <- if ("score_buro" %in% names(df)) scale(df$score_buro) else 0
-    ingreso  <- if ("ingreso_verificado" %in% names(df)) scale(df$ingreso_verificado) else 0
-    moras_p  <- if ("n_moras_previas" %in% names(df)) scale(df$n_moras_previas) else 0
-    rfm_v    <- if ("rfm" %in% names(df)) scale(df$rfm) else 0
+    s_buro <- if ("score_buro" %in% names(df)) scale(df$score_buro) else 0
+    ingreso <- if ("ingreso_verificado" %in% names(df)) scale(df$ingreso_verificado) else 0
+    moras_prev <- if ("n_moras_previas" %in% names(df)) scale(df$n_moras_previas) else 0
+    rfm <- if ("rfm" %in% names(df)) scale(df$rfm) else 0
 
-    # prob aceptar ↑ con score e ingreso; ↓ con moras
-    lin_acc <-  0.6 * s_buro + 0.4 * ingreso - 0.2 * moras_p + 0.2 * rfm_v
-    p_acc   <- 1/(1 + exp(-lin_acc))
-    # prob mora ↓ con score; ↑ con moras
-    lin_mor <- -0.7 * s_buro + 0.6 * moras_p - 0.2 * ingreso - 0.1 * rfm_v
-    p_mor   <- 1/(1 + exp(-lin_mor))
+    lin_acc <-  0.6 * s_buro + 0.4 * ingreso - 0.2 * moras_prev + 0.2 * rfm
+    p_acc <- 1/(1 + exp(-lin_acc))
+    lin_mor <- -0.7 * s_buro + 0.6 * moras_prev - 0.2 * ingreso - 0.1 * rfm
+    p_mor <- 1/(1 + exp(-lin_mor))
 
     acepta <- rbinom(nrow(df), 1, pmin(pmax(p_acc, 0.02), 0.98))
     mora   <- rbinom(nrow(df), 1, pmin(pmax(p_mor, 0.02), 0.98))
@@ -83,136 +91,158 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
   # ----------------------------
   rv <- shiny::reactiveValues(
     base = NULL,
-    X_final = NULL, id_cliente = NULL,
+    X_accept = NULL, X_mora = NULL,
+    id_cliente = NULL,
     y_accept = NULL, y_mora = NULL,
     fit_accept = NULL, fit_mora = NULL,
     probs_accept = NULL, probs_mora = NULL,
     auc_accept = NA_real_, auc_mora = NA_real_,
     score = NULL, thr_grid = NULL,
     thr_current = 0.5, metrics_current = NULL,
-    df_scores = NULL
+    df_scores = NULL,
+    # selección interactiva
+    var_rank_accept = NULL, var_rank_mora = NULL,
+    vars_accept_keep = NULL, vars_mora_keep = NULL,
+    term_map_accept = NULL, term_map_mora = NULL
   )
 
   # ----------------------------
-  # Entrenamiento de modelos
+  # Entrenamiento inicial de modelos (con variables candidatas del panel izquierdo)
   # ----------------------------
   observeEvent(input$train_models, {
+    shiny::req(datos_reactivos)
     d <- datos_reactivos()
     shiny::req(d)
-    base <- get_base_df(d)
-    rv$base <- base
 
-    # Etiquetas reales si existen, sino simuladas
-    if (!all(c("acepta","mora") %in% names(base))) {
-      labs <- simular_etiquetas(base)
-      base$acepta <- labs$acepta
-      base$mora   <- labs$mora
-    }
+    shiny::withProgress(message = "Entrenando modelos...", value = 0, {
+      incProgress(0.1)
 
-    shiny::req(input$vars)
-    X_final <- make_design(base, input$vars)
-    rv$X_final    <- X_final
-    rv$id_cliente <- attr(X_final, "id_cliente")
-    rv$y_accept   <- base$acepta
-    rv$y_mora     <- base$mora
+      base <- get_base_df(d)
+      rv$base <- base
 
-    # Modelos logísticos (helpers deben devolver lista con model, probs, auc)
-    acc <- run_logit(X_final, rv$y_accept)
-    mor <- run_logit(X_final, rv$y_mora)
+      # Etiquetas reales si existen, sino simuladas
+      if (!all(c("acepta","mora") %in% names(base))) {
+        labs <- simular_etiquetas(base)
+        base$acepta <- labs$acepta
+        base$mora   <- labs$mora
+      }
 
-    rv$fit_accept   <- acc$model
-    rv$fit_mora     <- mor$model
-    rv$probs_accept <- acc$probs
-    rv$probs_mora   <- mor$probs
-    rv$auc_accept   <- acc$auc
-    rv$auc_mora     <- mor$auc
+      shiny::validate(
+        shiny::need(length(input$vars) > 0, "Selecciona al menos una variable.")
+      )
 
-    # Score integrado y evaluación inicial (etiqueta "buena" = no mora)
-    rv$score          <- compute_integrated_score(rv$probs_accept, rv$probs_mora)
-    rv$thr_grid       <- evaluate_thresholds(rv$score, 1 - rv$y_mora)
-    rv$metrics_current <- evaluate_metrics(rv$score, 1 - rv$y_mora, rv$thr_current)
+      # Diseño para cada modelo (pueden ser iguales al inicio)
+      Xacc <- make_design(base, input$vars)
+      Xm   <- make_design(base, input$vars)
 
-    shiny::showNotification("Modelos entrenados y score integrado calculado.", type = "message")
-    shiny::updateTabsetPanel(session, "tabs", selected = "Modelos")
+      rv$id_cliente <- attr(Xacc, "id_cliente")
+      rv$X_accept   <- Xacc
+      rv$X_mora     <- Xm
+      rv$y_accept   <- base$acepta
+      rv$y_mora     <- base$mora
+      rv$term_map_accept <- attr(Xacc, "term_map")
+      rv$term_map_mora   <- attr(Xm, "term_map")
+
+      incProgress(0.2)
+
+      # Modelos logísticos
+      acc <- try(run_logit(Xacc, rv$y_accept, term_map = rv$term_map_accept), silent = TRUE)
+      mor <- try(run_logit(Xm,   rv$y_mora,   term_map = rv$term_map_mora),   silent = TRUE)
+
+      if (inherits(acc, "try-error") || inherits(mor, "try-error")) {
+        shiny::showNotification("Ocurrió un error entrenando GLM. Revisa NAs/colinealidad en las variables.", type = "error")
+        return(NULL)
+      }
+
+      rv$fit_accept   <- acc$model
+      rv$fit_mora     <- mor$model
+      rv$probs_accept <- acc$probs
+      rv$probs_mora   <- mor$probs
+      rv$auc_accept   <- acc$auc
+      rv$auc_mora     <- mor$auc
+
+      # Tablas y ranking por p-valor (para la selección interactiva)
+      rv$var_rank_accept <- summarize_p_by_var(acc$coefs)
+      rv$var_rank_mora   <- summarize_p_by_var(mor$coefs)
+
+      # Selección inicial: p <= alpha
+      alpha <- if (is.null(input$alpha)) 0.05 else input$alpha
+      rv$vars_accept_keep <- rv$var_rank_accept$Variable[rv$var_rank_accept$p_min <= alpha]
+      rv$vars_mora_keep   <- rv$var_rank_mora$Variable[rv$var_rank_mora$p_min <= alpha]
+
+      # Score integrado y evaluación inicial (etiqueta "buena" = no mora)
+      rv$score <- compute_integrated_score(rv$probs_accept, rv$probs_mora)
+      rv$thr_grid <- evaluate_thresholds(rv$score, 1 - rv$y_mora)
+      rv$metrics_current <- evaluate_metrics(rv$score, 1 - rv$y_mora, rv$thr_current)
+
+      incProgress(0.7)
+      shiny::showNotification("Modelos entrenados y score integrado calculado.", type = "message")
+      shiny::updateTabsetPanel(session, "tabs", selected = "Modelos")
+    })
   }, ignoreInit = TRUE)
 
   # ----------------------------
-  # Selección interactiva por p-valor y re-entrenamiento
-  # (Requiere inputs en UI: alpha_accept, alpha_mora, keep_vars_accept, keep_vars_mora,
-  #  retrain_accept, retrain_mora)
+  # Re-entrenar con selección interactiva (por p-valor / forzadas)
   # ----------------------------
-  observe({
-    shiny::req(rv$fit_accept)
-    tb <- broom::tidy(rv$fit_accept)
-    vars <- tb$term[!tb$term %in% "(Intercept)"]
-    pval <- tb$p.value[match(vars, tb$term)]
-    sel  <- vars[pval <= (input$alpha_accept %||% 0.05)]
-    shiny::updateCheckboxGroupInput(session, "keep_vars_accept",
-      choices = vars, selected = sel)
-  })
+  observeEvent(input$retrain_selected, {
+    shiny::req(rv$base, rv$y_accept, rv$y_mora)
 
-  observe({
-    shiny::req(rv$fit_mora)
-    tb <- broom::tidy(rv$fit_mora)
-    vars <- tb$term[!tb$term %in% "(Intercept)"]
-    pval <- tb$p.value[match(vars, tb$term)]
-    sel  <- vars[pval <= (input$alpha_mora %||% 0.05)]
-    shiny::updateCheckboxGroupInput(session, "keep_vars_mora",
-      choices = vars, selected = sel)
-  })
+    shiny::withProgress(message = "Reentrenando con selección...", value = 0, {
+      incProgress(0.1)
 
-  # Re-entrenar ACEPTACIÓN con selección del alumno
-  observeEvent(input$retrain_accept, {
-    shiny::req(rv$base, input$keep_vars_accept)
-    # Los términos de coeficientes son nombres de columnas de la matriz de diseño (dummies incluidas).
-    # Para regenerar X con solo los términos elegidos, detectamos la base de nombres originales:
-    # Como simplificación educativa, permitimos re-entrenar usando directamente las columnas seleccionadas
-    # desde la matriz ya creada si existen:
-    if (!is.null(rv$X_final) && all(input$keep_vars_accept %in% colnames(rv$X_final))) {
-      X_new <- as.matrix(rv$X_final[, unique(input$keep_vars_accept), drop = FALSE])
-      attr(X_new, "id_cliente") <- rv$id_cliente
-    } else {
-      # Si no calzan, volvemos a construir desde variables originales seleccionadas en UI
-      X_new <- make_design(rv$base, input$vars)
-    }
-    fit <- glm(rv$y_accept ~ X_new, family = binomial())
-    # Actualiza probabilidades y AUC
-    probs <- as.numeric(stats::predict(fit, type = "response"))
-    aucv  <- compute_auc_bin(probs, rv$y_accept)  # helper simple si no usas pROC directamente
+      # Candidatas originales
+      cand <- intersect(input$vars, names(rv$base))
 
-    rv$fit_accept   <- fit
-    rv$probs_accept <- probs
-    rv$auc_accept   <- aucv
+      # Aceptación
+      keep_acc <- unique(c(
+        intersect(input$keep_vars_accept, cand),
+        intersect(input$force_keep_accept, cand)
+      ))
+      if (length(keep_acc) == 0) keep_acc <- cand # fallback para no vaciar el modelo
 
-    # Recalcular score/metricas
-    shiny::req(rv$probs_mora)
-    rv$score           <- compute_integrated_score(rv$probs_accept, rv$probs_mora)
-    rv$thr_grid        <- evaluate_thresholds(rv$score, 1 - rv$y_mora)
-    rv$metrics_current <- evaluate_metrics(rv$score, 1 - rv$y_mora, rv$thr_current)
-  }, ignoreInit = TRUE)
+      Xacc <- make_design(rv$base, keep_acc)
+      rv$X_accept <- Xacc
+      rv$term_map_accept <- attr(Xacc, "term_map")
 
-  # Re-entrenar MORA con selección del alumno
-  observeEvent(input$retrain_mora, {
-    shiny::req(rv$base, input$keep_vars_mora)
-    if (!is.null(rv$X_final) && all(input$keep_vars_mora %in% colnames(rv$X_final))) {
-      X_new <- as.matrix(rv$X_final[, unique(input$keep_vars_mora), drop = FALSE])
-      attr(X_new, "id_cliente") <- rv$id_cliente
-    } else {
-      X_new <- make_design(rv$base, input$vars)
-    }
-    fit <- glm(rv$y_mora ~ X_new, family = binomial())
-    probs <- as.numeric(stats::predict(fit, type = "response"))
-    aucv  <- compute_auc_bin(probs, rv$y_mora)
+      # Mora
+      keep_mor <- unique(c(
+        intersect(input$keep_vars_mora, cand),
+        intersect(input$force_keep_mora, cand)
+      ))
+      if (length(keep_mor) == 0) keep_mor <- cand
 
-    rv$fit_mora   <- fit
-    rv$probs_mora <- probs
-    rv$auc_mora   <- aucv
+      Xm <- make_design(rv$base, keep_mor)
+      rv$X_mora <- Xm
+      rv$term_map_mora <- attr(Xm, "term_map")
 
-    # Recalcular score/metricas
-    shiny::req(rv$probs_accept)
-    rv$score           <- compute_integrated_score(rv$probs_accept, rv$probs_mora)
-    rv$thr_grid        <- evaluate_thresholds(rv$score, 1 - rv$y_mora)
-    rv$metrics_current <- evaluate_metrics(rv$score, 1 - rv$y_mora, rv$thr_current)
+      incProgress(0.3)
+
+      # Re-fit
+      acc <- try(run_logit(Xacc, rv$y_accept, term_map = rv$term_map_accept), silent = TRUE)
+      mor <- try(run_logit(Xm,   rv$y_mora,   term_map = rv$term_map_mora),   silent = TRUE)
+      if (inherits(acc, "try-error") || inherits(mor, "try-error")) {
+        shiny::showNotification("Error al reentrenar. Revisa variables seleccionadas.", type = "error")
+        return(NULL)
+      }
+
+      rv$fit_accept   <- acc$model
+      rv$fit_mora     <- mor$model
+      rv$probs_accept <- acc$probs
+      rv$probs_mora   <- mor$probs
+      rv$auc_accept   <- acc$auc
+      rv$auc_mora     <- mor$auc
+
+      rv$var_rank_accept <- summarize_p_by_var(acc$coefs)
+      rv$var_rank_mora   <- summarize_p_by_var(mor$coefs)
+
+      # Recalcular score/umbrales
+      rv$score <- compute_integrated_score(rv$probs_accept, rv$probs_mora)
+      rv$thr_grid <- evaluate_thresholds(rv$score, 1 - rv$y_mora)
+      rv$metrics_current <- evaluate_metrics(rv$score, 1 - rv$y_mora, rv$thr_current)
+
+      shiny::showNotification("Selección aplicada y modelos reentrenados.", type = "message")
+      shiny::updateTabsetPanel(session, "tabs", selected = "Modelos")
+    })
   }, ignoreInit = TRUE)
 
   # ----------------------------
@@ -221,21 +251,35 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
   output$tbl_coefs_accept <- DT::renderDT({
     shiny::req(rv$fit_accept)
     s <- summary(rv$fit_accept)
-    DT::datatable(.format_coef_table(s$coefficients),
-                  rownames = FALSE, options = list(pageLength = 8)) |>
-      DT::formatRound(c("Est.","E.E.","z","p-value"), 4)
+    tb <- .format_coef_table(s$coefficients, term_map = rv$term_map_accept)
+    DT::datatable(tb, rownames = FALSE, options = list(pageLength = 8)) |>
+      DT::formatRound(c("Estimado","ErrorStd","z","p_value"), 4)
   })
 
   output$tbl_coefs_mora <- DT::renderDT({
     shiny::req(rv$fit_mora)
     s <- summary(rv$fit_mora)
-    DT::datatable(.format_coef_table(s$coefficients),
-                  rownames = FALSE, options = list(pageLength = 8)) |>
-      DT::formatRound(c("Est.","E.E.","z","p-value"), 4)
+    tb <- .format_coef_table(s$coefficients, term_map = rv$term_map_mora)
+    DT::datatable(tb, rownames = FALSE, options = list(pageLength = 8)) |>
+      DT::formatRound(c("Estimado","ErrorStd","z","p_value"), 4)
   })
 
   output$auc_accept <- shiny::renderText({ sprintf("%.4f", rv$auc_accept) })
   output$auc_mora   <- shiny::renderText({ sprintf("%.4f", rv$auc_mora) })
+
+  # Listas de selección por p-valor (se actualizan luego de entrenar)
+  observe({
+    shiny::req(rv$var_rank_accept, rv$var_rank_mora)
+    alpha <- if (is.null(input$alpha)) 0.05 else input$alpha
+
+    choices_acc <- rv$var_rank_accept$Variable
+    sel_acc     <- rv$var_rank_accept$Variable[rv$var_rank_accept$p_min <= alpha]
+    shiny::updateCheckboxGroupInput(session, "keep_vars_accept", choices = choices_acc, selected = sel_acc)
+
+    choices_mor <- rv$var_rank_mora$Variable
+    sel_mor     <- rv$var_rank_mora$Variable[rv$var_rank_mora$p_min <= alpha]
+    shiny::updateCheckboxGroupInput(session, "keep_vars_mora", choices = choices_mor, selected = sel_mor)
+  })
 
   # ----------------------------
   # Evaluación de umbrales
@@ -249,7 +293,7 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
 
   observeEvent(input$apply_thr, {
     shiny::req(rv$score, rv$y_mora)
-    rv$thr_current    <- input$thr
+    rv$thr_current <- input$thr
     rv$metrics_current <- evaluate_metrics(rv$score, 1 - rv$y_mora, input$thr)
   }, ignoreInit = TRUE)
 
@@ -270,26 +314,22 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
 
   output$tbl_thr_metrics <- DT::renderDT({
     shiny::req(rv$thr_grid)
-    # Redondeo a 4 decimales para consistencia
-    df <- rv$thr_grid
-    num_cols <- names(df)[sapply(df, is.numeric)]
-    df[num_cols] <- lapply(df[num_cols], function(x) round(x, 4))
-    DT::datatable(df, options = list(pageLength = 10)) |>
-      DT::formatRound(num_cols, 4)
+    DT::datatable(rv$thr_grid, options = list(pageLength = 10)) |>
+      DT::formatRound(c("thr","accuracy","sensibilidad","especificidad","precision","f1"), 4)
   })
 
   # ----------------------------
   # Resultados finales por cliente (4 decimales)
   # ----------------------------
-  observeEvent(list(rv$score, rv$thr_current, rv$probs_accept, rv$probs_mora), {
-    shiny::req(rv$score, rv$id_cliente, rv$probs_accept, rv$probs_mora)
+  observeEvent(list(rv$score, rv$thr_current), {
+    shiny::req(rv$score, rv$id_cliente)
     decision <- as.integer(rv$score >= rv$thr_current)
     rv$df_scores <- data.frame(
       id_cliente = rv$id_cliente,
-      p_accept   = round(rv$probs_accept, 4),
-      p_mora     = round(rv$probs_mora, 4),
-      score      = round(rv$score, 4),
-      decision   = decision
+      p_accept = round(rv$probs_accept, 4),
+      p_mora   = round(rv$probs_mora, 4),
+      score    = round(rv$score, 4),
+      decision = decision
     )
   })
 
@@ -310,24 +350,38 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
   # ----------------------------
   observeEvent(input$confirmar, {
     shiny::req(rv$metrics_current, rv$df_scores)
+
+    # guardar métricas agregadas (sobre score integrado vs no-mora)
     m <- rv$metrics_current
     persist_eval_m2(
       id_sim = id_sim,
-      auc_accept   = rv$auc_accept, auc_mora = rv$auc_mora,
-      thr          = m$thr,
-      accuracy     = m$accuracy, sensibilidad = m$sensibilidad,
+      auc_accept = rv$auc_accept, auc_mora = rv$auc_mora,
+      thr = m$thr,
+      accuracy = m$accuracy, sensibilidad = m$sensibilidad,
       especificidad = m$especificidad, precision = m$precision, f1 = m$f1
     )
+
+    # guardar resultados por cliente
     persist_clientes_scores(
       id_sim = id_sim,
       df_clientes = rv$df_scores
     )
-    shiny::showNotification("Resultados guardados en data/eval_m2.csv y data/clientes_scores.csv", type = "message")
+
+    # guardar variables seleccionadas
+    persist_variables_m2(
+      id_sim = id_sim,
+      vars_candidatas = input$vars,
+      vars_accept_keep = input$keep_vars_accept,
+      vars_mora_keep   = input$keep_vars_mora,
+      alpha_sig = input$alpha
+    )
+
+    shiny::showNotification("Resultados guardados en data/*.csv", type = "message")
   }, ignoreInit = TRUE)
 
   observeEvent(input$reiniciar, {
     rv$base <- NULL
-    rv$X_final <- NULL; rv$id_cliente <- NULL
+    rv$X_accept <- NULL; rv$X_mora <- NULL; rv$id_cliente <- NULL
     rv$y_accept <- NULL; rv$y_mora <- NULL
     rv$fit_accept <- NULL; rv$fit_mora <- NULL
     rv$probs_accept <- NULL; rv$probs_mora <- NULL
@@ -335,6 +389,9 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
     rv$score <- NULL; rv$thr_grid <- NULL
     rv$thr_current <- 0.5; rv$metrics_current <- NULL
     rv$df_scores <- NULL
+    rv$var_rank_accept <- NULL; rv$var_rank_mora <- NULL
+    rv$vars_accept_keep <- NULL; rv$vars_mora_keep <- NULL
+    rv$term_map_accept <- NULL; rv$term_map_mora <- NULL
     shiny::showNotification("Módulo 2 reiniciado.", type = "message")
   }, ignoreInit = TRUE)
 

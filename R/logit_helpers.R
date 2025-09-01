@@ -1,129 +1,122 @@
 # R/logit_helpers.R
 # -------------------------------------------------------------------
 # Helpers para Scoring con Regresión Logística
-# - run_logit(): entrena GLM binomial y devuelve coefs + probabilidades + AUC
+# - run_logit(): entrena GLM binomial y devuelve p-valores de coeficientes
 # - evaluate_metrics(): calcula métricas para un umbral dado
 # - evaluate_thresholds(): calcula métricas a lo largo de un grid de umbrales
-# - compute_integrated_score(): p(aceptar) * (1 - p(mora))  [Tesis §2.3.2]
-# - compute_auc_bin(): AUC binario (respaldo si no hay pROC)
-# Todas las salidas destinadas a reporte se redondean a 4 decimales.
+# - compute_integrated_score(): combina p(aceptar) * (1 - p(mora))
+# - utilidades de formateo/redondeo a 4 decimales y mapeo termino->variable base
 # -------------------------------------------------------------------
 
-# --- Utilitarios internos -------------------------------------------------------
-
-# Redondeo seguro a 4 decimales (mantiene NAs)
-.round4 <- function(x) {
-  if (is.null(x)) return(x)
-  if (is.list(x)) return(lapply(x, .round4))
-  if (is.data.frame(x)) {
-    num <- sapply(x, is.numeric)
-    x[num] <- lapply(x[num], function(v) round(v, 4))
-    return(x)
-  }
+# Redondeo consistente a 4 decimales
+round4 <- function(x) {
   if (is.numeric(x)) return(round(x, 4))
   x
 }
 
-# AUC con pROC si existe; si no, usa respaldo (Mann–Whitney / Wilcoxon rank-sum)
+# AUC (opcional si está pROC)
 .try_auc <- function(y, prob){
-  y <- as.integer(y)
-  prob <- as.numeric(prob)
-  if (length(unique(y)) < 2L) return(NA_real_)
+  out <- NA_real_
   if (requireNamespace("pROC", quietly = TRUE)) {
     roc <- pROC::roc(response = y, predictor = prob, quiet = TRUE)
-    return(as.numeric(pROC::auc(roc)))
+    out <- as.numeric(pROC::auc(roc))
   }
-  # Respaldo: probabilidad de que un positivo tenga score > negativo (c-statistic)
-  pos <- prob[y == 1]
-  neg <- prob[y == 0]
-  if (length(pos) == 0 || length(neg) == 0) return(NA_real_)
-  ranks <- rank(c(pos, neg))
-  n1 <- length(pos); n0 <- length(neg)
-  r1 <- sum(ranks[seq_len(n1)])
-  auc <- (r1 - n1*(n1 + 1)/2) / (n1*n0)
-  as.numeric(auc)
+  out
 }
 
-# Tabla de coeficientes (acepta summary(fit)$coefficients)
-# Devuelve columnas: Variable, Est., E.E., z, p-value, Signif (máx. 4 decimales)
-.format_coef_table <- function(coefs_mat){
-  stopifnot(is.matrix(coefs_mat) || is.data.frame(coefs_mat))
-  tb <- as.data.frame(coefs_mat, stringsAsFactors = FALSE)
-  # Soporta tanto "z value" como "t value" (glm binomial usa z)
-  colnames(tb) <- c("Estimado","ErrorStd", "z", "p_value")[seq_len(ncol(tb))]
-  tb$Variable <- rownames(coefs_mat)
+# Tabla de coeficientes con p-valor y "stars" (4 decimales)
+.format_coef_table <- function(coefs_mat, term_map = NULL){
+  tb <- as.data.frame(coefs_mat)
+  tb$Termino <- rownames(coefs_mat)
   rownames(tb) <- NULL
+  names(tb) <- c("Estimado","ErrorStd","z","p_value","Termino")
+
+  # variable base (si se provee term_map)
+  if (!is.null(term_map)) {
+    base <- term_map[match(tb$Termino, names(term_map))]
+    tb$Variable <- ifelse(is.na(base), tb$Termino, base)
+  } else {
+    tb$Variable <- tb$Termino
+  }
+
   tb$Signif <- cut(
     tb$p_value,
     breaks = c(-Inf, .001, .01, .05, .1, Inf),
     labels = c("***","**","*",".","")
   )
-  tb <- tb[, c("Variable","Estimado","ErrorStd","z","p_value","Signif")]
-  names(tb) <- c("Variable","Est.","E.E.","z","p-value","Signif")
-  .round4(tb)
+  tb <- tb[, c("Termino","Variable","Estimado","ErrorStd","z","p_value","Signif")]
+
+  # 4 decimales
+  tb$Estimado <- round4(tb$Estimado)
+  tb$ErrorStd <- round4(tb$ErrorStd)
+  tb$z        <- round4(tb$z)
+  tb$p_value  <- round4(tb$p_value)
+
+  tb[order(tb$p_value), ]
 }
 
-# --- Modelo logístico -----------------------------------------------------------
+# Resumen de p-valores por variable base (mínimo p entre términos)
+summarize_p_by_var <- function(coef_tbl){
+  agg <- aggregate(p_value ~ Variable, coef_tbl, function(v) min(v, na.rm = TRUE))
+  names(agg) <- c("Variable","p_min")
+  agg$p_min <- round4(agg$p_min)
+  agg[order(agg$p_min, decreasing = FALSE), ]
+}
 
-# Entrena un GLM binomial (logístico) y devuelve lista: model, probs, coefs, auc
-run_logit <- function(X_final, y){
-  stopifnot(nrow(X_final) == length(y))
+# Entrena un GLM binomial (logístico) y devuelve tabla de coeficientes + probabilidades
+run_logit <- function(X_final, y, term_map = NULL){
+  stopifnot(length(y) == nrow(X_final))
   df <- as.data.frame(X_final)
   df$.y <- as.numeric(y)
-  fit <- stats::glm(.y ~ ., data = df, family = stats::binomial())
+
+  # NAs fuera para evitar cuelgues y convergencia
+  df <- stats::na.omit(df)
+
+  fit <- stats::glm(.y ~ ., data = df, family = stats::binomial(),
+                    control = list(maxit = 50))
   s   <- summary(fit)
-  coef_tbl <- .format_coef_table(s$coefficients)
-  prob <- as.numeric(stats::predict(fit, type = "response"))
+  coef_tbl <- .format_coef_table(s$coefficients, term_map = term_map[colnames(df)[colnames(df) != ".y"]])
+  prob <- stats::predict(fit, type = "response")
   auc  <- .try_auc(df$.y, prob)
-  list(
-    model = fit,
-    probs = prob,
-    coefs = coef_tbl,
-    auc   = as.numeric(round(auc, 4))
-  )
+
+  list(model = fit, probs = prob, coefs = coef_tbl, auc = auc)
 }
 
-# --- Métricas y umbrales --------------------------------------------------------
-
-# Métricas para un umbral específico (devuelve lista con valores a 4 decimales)
+# Métricas para un umbral específico
 evaluate_metrics <- function(probs, y, thr = 0.5){
+  yhat <- as.integer(probs >= thr)
   y    <- as.integer(y)
-  yhat <- as.integer(as.numeric(probs) >= thr)
-  TP <- sum(yhat == 1 & y == 1, na.rm = TRUE)
-  TN <- sum(yhat == 0 & y == 0, na.rm = TRUE)
-  FP <- sum(yhat == 1 & y == 0, na.rm = TRUE)
-  FN <- sum(yhat == 0 & y == 1, na.rm = TRUE)
+  TP <- sum(yhat == 1 & y == 1)
+  TN <- sum(yhat == 0 & y == 0)
+  FP <- sum(yhat == 1 & y == 0)
+  FN <- sum(yhat == 0 & y == 1)
   acc <- (TP + TN) / length(y)
   sens <- ifelse((TP + FN) > 0, TP / (TP + FN), NA_real_)  # Recall
   spec <- ifelse((TN + FP) > 0, TN / (TN + FP), NA_real_)
   prec <- ifelse((TP + FP) > 0, TP / (TP + FP), NA_real_)
-  f1   <- ifelse((prec + sens) > 0, 2 * prec * sens / (prec + sens), NA_real_)
-  .round4(list(
-    thr = thr, accuracy = acc, sensibilidad = sens, especificidad = spec,
-    precision = prec, f1 = f1, TP = TP, TN = TN, FP = FP, FN = FN
-  ))
+  f1 <- ifelse((prec + sens) > 0, 2 * prec * sens / (prec + sens), NA_real_)
+
+  list(
+    thr = round4(thr),
+    accuracy = round4(acc),
+    sensibilidad = round4(sens),
+    especificidad = round4(spec),
+    precision = round4(prec),
+    f1 = round4(f1),
+    TP = TP, TN = TN, FP = FP, FN = FN
+  )
 }
 
-# Curva de métricas vs umbral (data.frame con 4 decimales)
+# Curva de métricas vs umbral
 evaluate_thresholds <- function(probs, y, thrs = seq(0.05, 0.95, by = 0.05)){
   y <- as.integer(y)
   out <- lapply(thrs, function(t) evaluate_metrics(probs, y, t))
-  df  <- do.call(rbind, lapply(out, function(z) as.data.frame(z, stringsAsFactors = FALSE)))
-  .round4(df)
+  do.call(rbind, lapply(out, function(z) as.data.frame(z)))
 }
 
-# --- Score integrado ------------------------------------------------------------
-
-# Score integrado (Tesis §2.3.2): por defecto p(aceptar) * (1 - p(mora))
-# Pesos como potencias para flexibilizar la importancia relativa.
+# Score integrado: maximiza aceptación y minimiza mora
+# Por defecto: score = p(aceptar) * (1 - p(mora))
 compute_integrated_score <- function(p_accept, p_mora, w_accept = 1, w_no_mora = 1){
-  s <- (as.numeric(p_accept) ^ w_accept) * ((1 - as.numeric(p_mora)) ^ w_no_mora)
+  s <- (p_accept ^ w_accept) * ((1 - p_mora) ^ w_no_mora)
   pmin(pmax(s, 0), 1)
-}
-
-# --- AUC binario expuesto (usado en re-entrenos del server) ---------------------
-
-# Versión pública para re-entrenamientos cuando no se usa pROC directamente.
-compute_auc_bin <- function(probs, y){
-  .try_auc(y, probs) |> round(4)
 }
