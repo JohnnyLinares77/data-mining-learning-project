@@ -75,14 +75,15 @@ mod_m2_ui <- function(id){
               $$"),
               shiny::p("Un umbral configurable (p.ej., 0.65) define la elegibilidad."),
               shiny::tags$hr(),
-              shiny::h5("Flujo general"),
-              shiny::tags$ul(
-                shiny::tags$li("Selecciona variables predictoras (incluye el cluster del Módulo 1)."),
-                shiny::tags$li("Entrena los modelos de Aceptación y Mora."),
-                shiny::tags$li("Revisa coeficientes y p-valores; valida AUC."),
-                shiny::tags$li("Evalúa métricas por umbral sobre el score integrado."),
-                shiny::tags$li("Confirma y exporta resultados.")
-              )
+              shiny::h5("Flujo general")
+            ),
+            # ⚠️ El botón estaba adentro del <ul>. Ahora lo separamos:
+            shiny::tags$ul(
+              shiny::tags$li("Selecciona variables predictoras (incluye el cluster del Módulo 1)."),
+              shiny::tags$li("Entrena los modelos de Aceptación y Mora."),
+              shiny::tags$li("Revisa coeficientes y p-valores; valida AUC."),
+              shiny::tags$li("Evalúa métricas por umbral sobre el score integrado."),
+              shiny::tags$li("Confirma y exporta resultados.")
             )
           ),
 
@@ -93,8 +94,8 @@ mod_m2_ui <- function(id){
             shiny::p("Coeficientes con p-valor y AUC por modelo."),
             shiny::tags$hr(),
 
-            # Aceptación
             shiny::fluidRow(
+              # Aceptación
               shiny::column(
                 width = 6,
                 shiny::h5("Modelo: Probabilidad de Aceptación"),
@@ -111,7 +112,6 @@ mod_m2_ui <- function(id){
                 shiny::actionButton(ns("retrain_accept"), "Re-entrenar (Aceptación)",
                                     class = "btn-secondary")
               ),
-
               # Mora
               shiny::column(
                 width = 6,
