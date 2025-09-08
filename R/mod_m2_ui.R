@@ -50,7 +50,7 @@ mod_m2_ui <- function(id){
             )
           ),
 
-          # ---- Tab 1: Modelos (entrenar y ver tablas; SIN toggles)
+          # ---- Tab 1: Significancia
           shiny::tabPanel(
             title = "Significancia",
             shiny::h4("Significancia de Variables"),
@@ -82,7 +82,7 @@ mod_m2_ui <- function(id){
             shiny::tags$hr()
           ),
 
-          # ---- Tab 2: Interpretación (NUEVO)
+          # ---- Tab 2: Interpretación
           shiny::tabPanel(
             title = "Análisis",
             shiny::h4("Análisis de variables del modelo"),
@@ -108,7 +108,7 @@ mod_m2_ui <- function(id){
             shiny::uiOutput(ns("interp_feedback"))
           ),
 
-          # ---- Tab 3: Selección (tu UI actual de toggles)
+          # ---- Tab 3: Selección
           shiny::tabPanel(
             title = "Selección",
             shiny::h5("Selección de variables y reentrenamiento"),
