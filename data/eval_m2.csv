@@ -1,0 +1,2 @@
+"id_sim","fecha","auc_accept","auc_mora","thr","accuracy","sensibilidad","especificidad","precision","f1"
+"SIM_20250901_164803","2025-09-01 16:49:18.222501",0.6999,0.6906,0.5,0.57,0.2184,0.9202,0.7315,0.3364

@@ -86,6 +86,18 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
     list(acepta = acepta, mora = mora)
   }
 
+  # Helper: signo por variable usando la tabla formateada (.format_coef_table)
+  .signos_por_variable <- function(model, term_map){
+    s <- summary(model)
+    tb <- .format_coef_table(s$coefficients, term_map = term_map)
+    tb <- tb[tb$Variable != "(Intercept)", , drop = FALSE]
+    if (!nrow(tb)) return(setNames(character(0), character(0)))
+    # Toma el coeficiente de menor p-valor por Variable
+    tb$idx_min_p <- ave(tb$p_value, tb$Variable, FUN = function(x) as.integer(rank(x, ties.method = "first") == 1))
+    tb_min <- tb[tb$idx_min_p == 1, c("Variable","Estimado")]
+    setNames(ifelse(tb_min$Estimado >= 0, "+", "−"), tb_min$Variable)
+  }
+
   # ----------------------------
   # Estado reactivo
   # ----------------------------
@@ -103,8 +115,15 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
     # selección interactiva
     var_rank_accept = NULL, var_rank_mora = NULL,
     vars_accept_keep = NULL, vars_mora_keep = NULL,
-    term_map_accept = NULL, term_map_mora = NULL
+    term_map_accept = NULL, term_map_mora = NULL,
+    # Interpretación
+    interp_ok = FALSE
   )
+
+  # Deshabilita pestaña "Selección" al iniciar
+  shiny::observe({
+    shinyjs::disable(selector = sprintf('a[data-value="%s"]', "Selección"))
+  })
 
   # ----------------------------
   # Entrenamiento inicial de modelos (con variables candidatas del panel izquierdo)
@@ -178,6 +197,22 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
       incProgress(0.7)
       shiny::showNotification("Modelos entrenados y score integrado calculado.", type = "message")
       shiny::updateTabsetPanel(session, "tabs", selected = "Modelos")
+
+      # ===== Poblar opciones de la pestaña Interpretación =====
+      vars_disponibles <- sort(unique(c(rv$var_rank_accept$Variable, rv$var_rank_mora$Variable)))
+      shiny::updateCheckboxGroupInput(session, "interp_sig_vars",
+                                      choices = vars_disponibles, selected = character(0))
+      shiny::updateSelectInput(session, "interp_risk_must",
+                               choices = vars_disponibles, selected = NULL)
+
+      output$interp_signos_ui <- shiny::renderUI({
+        lapply(vars_disponibles, function(v)
+          shiny::selectInput(ns(paste0("sign_", v)),
+                             label = paste("Signo de", v),
+                             choices = c("+" = "+", "−" = "−"),
+                             selected = NULL, width = "220px"))
+      })
+      # ========================================================
     })
   }, ignoreInit = TRUE)
 
@@ -279,6 +314,78 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
     choices_mor <- rv$var_rank_mora$Variable
     sel_mor     <- rv$var_rank_mora$Variable[rv$var_rank_mora$p_min <= alpha]
     shiny::updateCheckboxGroupInput(session, "keep_vars_mora", choices = choices_mor, selected = sel_mor)
+  })
+
+  # ----------------------------
+  # Pestaña INTERPRETACIÓN: validación y desbloqueo de Selección
+  # ----------------------------
+  observeEvent(input$interp_enviar, {
+    shiny::req(rv$fit_accept, rv$fit_mora, rv$var_rank_accept, rv$var_rank_mora)
+
+    alpha <- if (is.null(input$alpha)) 0.05 else input$alpha
+
+    # 1) Variables significativas (clave) en cualquiera de los dos modelos
+    sig_acc <- rv$var_rank_accept$Variable[rv$var_rank_accept$p_min < alpha]
+    sig_mor <- rv$var_rank_mora$Variable[rv$var_rank_mora$p_min   < alpha]
+    clave_sig <- sort(unique(c(sig_acc, sig_mor)))
+
+    marcadas <- input$interp_sig_vars
+    if (is.null(marcadas)) marcadas <- character(0)
+    marcadas <- sort(unique(marcadas))
+    ok_sig <- identical(marcadas, clave_sig)
+
+    # 2) Signos por variable (usa aceptación y si no, mora)
+    signos_acc <- .signos_por_variable(rv$fit_accept, rv$term_map_accept)
+    signos_mor <- .signos_por_variable(rv$fit_mora,   rv$term_map_mora)
+    signos_ok <- TRUE
+    for (v in clave_sig) {
+      sel <- input[[ns(paste0("sign_", v))]]
+      if (is.null(sel)) next
+      signo_ref <- if (v %in% names(signos_acc)) signos_acc[[v]] else signos_mor[[v]]
+      if (is.null(signo_ref) || length(signo_ref) == 0) next
+      signos_ok <- signos_ok && (sel == signo_ref)
+    }
+
+    # 3) Regla de negocio (ajusta según políticas)
+    obligatorias <- c("score_buro")  # puedes pasar esto como parámetro o leer de config
+    ok_riesgo <- !is.null(input$interp_risk_must) && input$interp_risk_must %in% obligatorias
+
+    # 4) Interpretación escrita mínima
+    texto_ok <- nchar(trimws(input$interp_text)) >= 40
+
+    # Puntaje
+    puntaje <- (ok_sig*45) + (signos_ok*35) + (ok_riesgo*10) + (texto_ok*10)
+
+    # Referencia/clave textual
+    ref_text <- paste0(
+      "Variables significativas con α=", sprintf("%.3f", alpha), ": ",
+      if (length(clave_sig)) paste(clave_sig, collapse = ", ") else "ninguna", ". ",
+      "Variable obligatoria por negocio: ", paste(obligatorias, collapse = ", "), ". ",
+      "Recuerda que variables con p ≥ α pueden mantenerse por interpretabilidad, cumplimiento o requisitos operativos."
+    )
+
+    output$interp_feedback <- shiny::renderUI({
+      shiny::tagList(
+        shiny::p(if (ok_sig) "✓ Selección de variables significativas correcta."
+                 else shiny::HTML("✗ Revisa las variables con p&nbsp;<&nbsp;α.")),
+        shiny::p(if (signos_ok) "✓ Signos de los coeficientes correctos."
+                 else "✗ Verifica el signo de cada β estimado."),
+        shiny::p(if (ok_riesgo) "✓ Regla de negocio identificada correctamente."
+                 else "✗ Indica la variable obligatoria por Gerencia de Riesgos."),
+        shiny::p(if (texto_ok) "✓ Interpretación escrita recibida."
+                 else "✗ Amplía tu interpretación (mínimo 40 caracteres)."),
+        shiny::p(shiny::strong(sprintf("Puntaje: %d/100", puntaje))),
+        shiny::hr(),
+        shiny::strong("Interpretación de referencia"),
+        shiny::p(ref_text)
+      )
+    })
+
+    rv$interp_ok <- puntaje >= 70
+    if (rv$interp_ok) {
+      shinyjs::enable(selector = sprintf('a[data-value="%s"]', "Selección"))
+      shiny::updateTabsetPanel(session, inputId = "tabs", selected = "Selección")
+    }
   })
 
   # ----------------------------
@@ -392,6 +499,8 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
     rv$var_rank_accept <- NULL; rv$var_rank_mora <- NULL
     rv$vars_accept_keep <- NULL; rv$vars_mora_keep <- NULL
     rv$term_map_accept <- NULL; rv$term_map_mora <- NULL
+    rv$interp_ok <- FALSE
+    shinyjs::disable(selector = sprintf('a[data-value="%s"]', "Selección"))
     shiny::showNotification("Módulo 2 reiniciado.", type = "message")
   }, ignoreInit = TRUE)
 

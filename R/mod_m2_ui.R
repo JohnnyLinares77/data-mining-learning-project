@@ -1,18 +1,9 @@
-# R/mod_m2_ui.R
-# -------------------------------------------------------------------
-# UI del Módulo 2 – Scoring de Clientes (Regresión Logística)
-# Tabs: Intro. | Modelos | Umbral | Resultados
-# Mantiene la misma estructura visual del Módulo 1
-# -------------------------------------------------------------------
-
 mod_m2_ui <- function(id){
   ns <- shiny::NS(id)
   shiny::fluidPage(
-    shiny::withMathJax(),   # para fórmulas en Intro
+    shinyjs::useShinyjs(),   # <— NUEVO: para habilitar/deshabilitar pestañas
+    shiny::withMathJax(),
     shiny::fluidRow(
-      # -------------------------
-      # Panel izquierdo: Inputs
-      # -------------------------
       shiny::column(
         width = 3,
         shiny::h3("Inputs"),
@@ -22,34 +13,23 @@ mod_m2_ui <- function(id){
           inputId = ns("vars"),
           label   = NULL,
           choices = c(
-            # Demográficas / básicas
-            "edad","estado_civil","ubicacion","nivel_educativo",
-            "tipo_ocupacion","rubro_laboral","n_dependientes",
-            # Historial / financieras / derivadas
+            "edad","estado_civil","ubicacion","nivel_educativo","tipo_ocupacion","rubro_laboral","n_dependientes",
             "antiguedad_cliente","n_moras_previas","dias_atraso_max","n_moras_leves",
             "ingreso_declarado","ingreso_verificado","cuota_ingreso",
-            "capacidad_endeudamiento","endeudamiento_total",
-            "rfm","score_buro","tendencia_ingresos",
-            # Cluster del Módulo 1
+            "capacidad_endeudamiento","endeudamiento_total","rfm","score_buro","tendencia_ingresos",
             "cluster_id"
           ),
           selected = c("edad","ingreso_verificado","rfm","score_buro","cluster_id")
-        ),
-        shiny::tags$hr(),
-        shiny::numericInput(ns("alpha"), "\\(\\alpha\\) para significancia (p-valor)", value = 0.05, min = 0.001, max = 0.2, step = 0.001),
-        shiny::actionButton(ns("train_models"), "Entrenar Modelos (Logit)")
+        )
       ),
-
-      # -------------------------
-      # Panel derecho: Resultados (tabs)
-      # -------------------------
       shiny::column(
         width = 9,
         shiny::h3("Módulo 2: Scoring del cliente"),
+
         shiny::tabsetPanel(
           id = ns("tabs"),
 
-          # ---- Tab 0: Intro
+          # ---- Tab 0: Intro (igual que tenías)
           shiny::tabPanel(
             title = "Intro.",
             shiny::br(),
@@ -63,54 +43,108 @@ mod_m2_ui <- function(id){
             shiny::tags$ul(
               shiny::tags$li("Selecciona variables predictoras (incluye el cluster del Módulo 1)."),
               shiny::tags$li("Entrena los modelos logísticos de Aceptación y Mora."),
-              shiny::tags$li("Revisa significancia de coeficientes (p-valores) y el AUC."),
-              shiny::tags$li("Usa la selección interactiva para (des)activar variables según p-valor o por criterio."),
-              shiny::tags$li("Evalúa métricas por umbral sobre el score integrado y define el corte."),
-              shiny::tags$li("Confirma y exporta resultados para módulos posteriores.")
+              shiny::tags$li("Revisa significancia de coeficientes (p-valores)."),
+              shiny::tags$li("Realiza una interpretación guiada de los resultados."),
+              shiny::tags$li("Selecciona variables y reentrena el modelo."),
+              shiny::tags$li("Evalúa métricas por umbral y confirma resultados.")
             )
           ),
 
-          # ---- Tab 1: Modelos
+          # ---- Tab 1: Modelos (entrenar y ver tablas; SIN toggles)
           shiny::tabPanel(
             title = "Modelos",
-            shiny::h4("Regresión Logística"),
-            shiny::p("Coeficientes con p-valor (4 decimales). Panel de la derecha para selección interactiva por p-valor; puedes forzar incluir variables."),
+            shiny::h4("Significancia de Variables"),
+            shiny::withMathJax( shiny::p("El nivel de significancia \\(\\alpha\\) cumple un papel esencial como umbral de decisión para la selección de variables 
+            en regresión logística. Define cuánta evidencia estadística se exige para considerar que una variable tiene efecto sobre la respuesta y controla la 
+            rigurosidad con la que se aceptan o descartan predictores."), 
+            shiny::p("La evaluación se formula como una prueba de hipótesis para cada coeficiente:"), 
+            shiny::p("\\(H_0: \\beta_j = 0\\)", style = "text-align:center"), 
+            shiny::p("\\(H_a: \\beta_j \\neq 0\\)", style = "text-align:center"), 
+            shiny::p("La regla de decisión compara el p-valor del estimador con \\(\\alpha\\): si el p-valor es menor que \\(\\alpha\\), se rechaza \\(H_0\\) y 
+            la variable se considera estadísticamente significativa; si es mayor o igual, no se rechaza \\(H_0\\)."), 
+            shiny::p("Reducir \\(\\alpha\\) (por ejemplo, de 0.05 a 0.01) hace más estricto el criterio: solo se retienen variables con evidencia muy sólida 
+            (p-valores muy pequeños). Con ello se reduce la probabilidad de falsos positivos (error tipo I), pero aumenta el riesgo de excluir variables 
+            realmente útiles (error tipo II)."), 
+            shiny::p("Aumentar \\(\\alpha\\) (por ejemplo, de 0.05 a 0.10) relaja el criterio: se aceptan más variables como significativas, 
+            incluso con menor evidencia estadística. Esto puede enriquecer el modelo con información adicional, aunque eleva la probabilidad de 
+            incorporar predictores sin efecto real, incrementando el riesgo de error tipo I."), 
+            shiny::p("La interpretación práctica exige equilibrar parsimonia, capacidad explicativa y objetivos de negocio. 
+            Un \\(\\alpha\\) bajo favorece modelos más estables y concisos; un \\(\\alpha\\) alto produce modelos más inclusivos pero potencialmente 
+            menos confiables."), 
+            shiny::p("Además, la selección no depende solo del criterio estadístico: las reglas de negocio y el conocimiento del dominio pueden justificar 
+            mantener variables no significativas (p-valor \\(\\geq\\) \\(\\alpha\\)) cuando aportan interpretabilidad, cumplimiento normativo, 
+            trazabilidad de decisiones o son requisitos funcionales del despliegue. De igual modo, cuando hay restricciones operativas, puede priorizarse 
+            la inclusión de variables con p-valores menores que \\(\\alpha\\) por su mayor evidencia estadística y robustez ante auditorías.") ),
+
+
+            shiny::numericInput(ns("alpha"), "\\(\\alpha\\) para significancia (p-valor)", value = 0.05, min = 0.001, max = 0.2, step = 0.001),
+            shiny::actionButton(ns("train_models"), "Entrenar Modelos (Logit)"),
             shiny::tags$hr(),
 
-            # ACEPTACIÓN
             shiny::h5("Modelo: Probabilidad de Aceptación"),
+            DT::DTOutput(ns("tbl_coefs_accept")),
+            shiny::p(shiny::strong("AUC aceptación: "), shiny::textOutput(ns("auc_accept"), inline = TRUE)),
+            shiny::tags$hr(),
+
+            shiny::h5("Modelo: Probabilidad de Mora"),
+            DT::DTOutput(ns("tbl_coefs_mora")),
+            shiny::p(shiny::strong("AUC mora: "), shiny::textOutput(ns("auc_mora"), inline = TRUE))
+          ),
+
+          # ---- Tab 2: Interpretación (NUEVO)
+          shiny::tabPanel(
+            title = "Interpretación",
+            shiny::h4("Interpretación guiada (antes de seleccionar variables)"),
+            shiny::helpText("Responde y envía para habilitar la pestaña 'Selección'."),
+            shiny::checkboxGroupInput(ns("interp_sig_vars"),
+                                      label = "Marca las variables significativas con el α actual (p < α):",
+                                      choices = c(), selected = c()),
+            shiny::uiOutput(ns("interp_signos_ui")),  # selects por variable
+            shiny::selectInput(ns("interp_risk_must"),
+                               "Indica la variable que debe formar parte del modelo por regla de negocio (Gerencia de Riesgos):",
+                               choices = c()),
+            shiny::textAreaInput(ns("interp_text"),
+                                 "Escribe tu interpretación:",
+                                 placeholder = "Explica qué variables aportan, el sentido de los signos y cuándo mantendrías variables no significativas por reglas de negocio.",
+                                 width = "100%", height = "120px"),
+            shiny::actionButton(ns("interp_enviar"), "Enviar interpretación"),
+            shiny::tags$hr(),
+            shiny::uiOutput(ns("interp_feedback"))
+          ),
+
+          # ---- Tab 3: Selección (tu UI actual de toggles)
+          shiny::tabPanel(
+            title = "Selección",
+            shiny::h4("Selección de variables y reentrenamiento"),
+            shiny::helpText("Disponible tras enviar la interpretación."),
+            shiny::h5("Aceptación"),
             shiny::fluidRow(
-              shiny::column(8, DT::DTOutput(ns("tbl_coefs_accept"))),
-              shiny::column(4,
+              shiny::column(6,
                 shiny::tags$strong("Mantener variables (aceptación)"),
-                shiny::checkboxGroupInput(ns("keep_vars_accept"), label = NULL, choices = c()),
+                shiny::checkboxGroupInput(ns("keep_vars_accept"), label = NULL, choices = c())
+              ),
+              shiny::column(6,
                 shiny::tags$strong("Forzar incluir"),
                 shiny::checkboxGroupInput(ns("force_keep_accept"), label = NULL, choices = c())
               )
             ),
-            shiny::p(shiny::strong("AUC aceptación: "), shiny::textOutput(ns("auc_accept"), inline = TRUE)),
-
-            shiny::tags$hr(),
-
-            # MORA
-            shiny::h5("Modelo: Probabilidad de Mora"),
+            shiny::h5("Mora"),
             shiny::fluidRow(
-              shiny::column(8, DT::DTOutput(ns("tbl_coefs_mora"))),
-              shiny::column(4,
+              shiny::column(6,
                 shiny::tags$strong("Mantener variables (mora)"),
-                shiny::checkboxGroupInput(ns("keep_vars_mora"), label = NULL, choices = c()),
+                shiny::checkboxGroupInput(ns("keep_vars_mora"), label = NULL, choices = c())
+              ),
+              shiny::column(6,
                 shiny::tags$strong("Forzar incluir"),
                 shiny::checkboxGroupInput(ns("force_keep_mora"), label = NULL, choices = c())
               )
             ),
-            shiny::p(shiny::strong("AUC mora: "), shiny::textOutput(ns("auc_mora"), inline = TRUE)),
-
             shiny::div(style="margin-top:8px;",
               shiny::actionButton(ns("retrain_selected"), "Aplicar selección y reentrenar")
             )
           ),
 
-          # ---- Tab 2: Umbral
+          # ---- Tab 4: Umbral (igual)
           shiny::tabPanel(
             title = "Umbral",
             shiny::h4("Selección de umbral sobre el score integrado"),
@@ -124,7 +158,7 @@ mod_m2_ui <- function(id){
             DT::DTOutput(ns("tbl_thr_metrics"))
           ),
 
-          # ---- Tab 3: Resultados
+          # ---- Tab 5: Resultados (igual)
           shiny::tabPanel(
             title = "Resultados",
             shiny::br(),
