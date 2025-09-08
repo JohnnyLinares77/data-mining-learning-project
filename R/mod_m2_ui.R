@@ -52,7 +52,7 @@ mod_m2_ui <- function(id){
 
           # ---- Tab 1: Modelos (entrenar y ver tablas; SIN toggles)
           shiny::tabPanel(
-            title = "Modelos",
+            title = "Significancia",
             shiny::h4("Significancia de Variables"),
             shiny::withMathJax( shiny::p("El nivel de significancia \\(\\alpha\\) cumple un papel esencial como umbral de decisión para la selección de variables 
             en regresión logística. Define cuánta evidencia estadística se exige para considerar que una variable tiene efecto sobre la respuesta y controla la 
@@ -79,33 +79,29 @@ mod_m2_ui <- function(id){
 
             shiny::numericInput(ns("alpha"), "\\(\\alpha\\) para significancia (p-valor)", value = 0.05, min = 0.001, max = 0.2, step = 0.001),
             shiny::actionButton(ns("train_models"), "Entrenar Modelos (Logit)"),
-            shiny::tags$hr(),
-
-            shiny::h5("Modelo: Probabilidad de Aceptación"),
-            DT::DTOutput(ns("tbl_coefs_accept")),
-            shiny::p(shiny::strong("AUC aceptación: "), shiny::textOutput(ns("auc_accept"), inline = TRUE)),
-            shiny::tags$hr(),
-
-            shiny::h5("Modelo: Probabilidad de Mora"),
-            DT::DTOutput(ns("tbl_coefs_mora")),
-            shiny::p(shiny::strong("AUC mora: "), shiny::textOutput(ns("auc_mora"), inline = TRUE))
+            shiny::tags$hr()
           ),
 
           # ---- Tab 2: Interpretación (NUEVO)
           shiny::tabPanel(
-            title = "Interpretación",
-            shiny::h4("Interpretación guiada (antes de seleccionar variables)"),
+            title = "Análisis",
+            shiny::h4("Análisis de variables del modelo"),
             shiny::helpText("Responde y envía para habilitar la pestaña 'Selección'."),
+
+            shiny::h5("Modelo: Probabilidad de Aceptación de Crédito"),
+            DT::DTOutput(ns("tbl_coefs_accept")),
+            shiny::p(shiny::strong("AUC aceptación: "), shiny::textOutput(ns("auc_accept"), inline = TRUE)),
+            shiny::tags$hr(),
+
             shiny::checkboxGroupInput(ns("interp_sig_vars"),
                                       label = "Marca las variables significativas con el α actual (p < α):",
                                       choices = c(), selected = c()),
-            shiny::uiOutput(ns("interp_signos_ui")),  # selects por variable
-            shiny::selectInput(ns("interp_risk_must"),
-                               "Indica la variable que debe formar parte del modelo por regla de negocio (Gerencia de Riesgos):",
-                               choices = c()),
+
+            shiny::h5("Variable asignada para interpretar:"),
+            shiny::uiOutput(ns("interp_var_target")),
             shiny::textAreaInput(ns("interp_text"),
-                                 "Escribe tu interpretación:",
-                                 placeholder = "Explica qué variables aportan, el sentido de los signos y cuándo mantendrías variables no significativas por reglas de negocio.",
+                                 "Escriba la interpretación del coeficiente de la variable:",
+                                 placeholder = "Redacta la interpretación del coeficiente, considere significancia y signo... ",
                                  width = "100%", height = "120px"),
             shiny::actionButton(ns("interp_enviar"), "Enviar interpretación"),
             shiny::tags$hr(),
@@ -115,29 +111,22 @@ mod_m2_ui <- function(id){
           # ---- Tab 3: Selección (tu UI actual de toggles)
           shiny::tabPanel(
             title = "Selección",
-            shiny::h4("Selección de variables y reentrenamiento"),
-            shiny::helpText("Disponible tras enviar la interpretación."),
-            shiny::h5("Aceptación"),
+            shiny::h5("Selección de variables y reentrenamiento"),
+            shiny::h4("Modelo de Probabilidad de Aceptación de Crédito"),
             shiny::fluidRow(
               shiny::column(6,
-                shiny::tags$strong("Mantener variables (aceptación)"),
+                DT::DTOutput(ns("tbl_coefs_accept")),
+                shiny::tags$strong("Selección de variables a mantener"),
                 shiny::checkboxGroupInput(ns("keep_vars_accept"), label = NULL, choices = c())
               ),
-              shiny::column(6,
-                shiny::tags$strong("Forzar incluir"),
-                shiny::checkboxGroupInput(ns("force_keep_accept"), label = NULL, choices = c())
-              )
             ),
             shiny::h5("Mora"),
             shiny::fluidRow(
               shiny::column(6,
-                shiny::tags$strong("Mantener variables (mora)"),
+                DT::DTOutput(ns("tbl_coefs_mora")),
+                shiny::tags$strong("Selección de variables a mantener"),
                 shiny::checkboxGroupInput(ns("keep_vars_mora"), label = NULL, choices = c())
               ),
-              shiny::column(6,
-                shiny::tags$strong("Forzar incluir"),
-                shiny::checkboxGroupInput(ns("force_keep_mora"), label = NULL, choices = c())
-              )
             ),
             shiny::div(style="margin-top:8px;",
               shiny::actionButton(ns("retrain_selected"), "Aplicar selección y reentrenar")
@@ -147,6 +136,41 @@ mod_m2_ui <- function(id){
           # ---- Tab 4: Umbral (igual)
           shiny::tabPanel(
             title = "Umbral",
+            shiny::withMathJax(),
+
+            shiny::p("En este módulo trabajamos con dos modelos: ",
+                    "uno para la probabilidad de aceptación ",
+                    "\\(p(aceptar)\\) y otro para la probabilidad de mora ",
+                    "\\(p(mora)\\)."),
+
+            shiny::p("Definimos el score integrado como:",
+                    "\\[ \\text{score} = p(aceptar) \\times (1 - p(mora)) \\]"),
+
+            shiny::p("El umbral (threshold) \\(\\tau\\) define la regla de decisión: ",
+                    "si \\(\\text{score} \\geq \\tau\\), clasificamos al cliente como ",
+                    "APROBADO; de lo contrario, como RECHAZADO."),
+
+            shiny::p("Al entrenar el modelo con datos históricos (aprendizaje supervisado), ",
+                    "podemos comparar las predicciones con los resultados reales ",
+                    "y así calcular los aciertos y errores en una matriz de confusión."),
+
+            shiny::p("De la matriz de confusión obtenemos varias métricas:"),
+            shiny::p("• Accuracy: proporción de aciertos totales ",
+                    "\\[ Accuracy = \\frac{TP + TN}{TP+TN+FP+FN} \\]"),
+            shiny::p("• Sensibilidad (Recall): capacidad de detectar positivos ",
+                    "\\[ Sensibilidad = \\frac{TP}{TP+FN} \\]"),
+            shiny::p("• Especificidad: capacidad de detectar negativos ",
+                    "\\[ Especificidad = \\frac{TN}{TN+FP} \\]"),
+            shiny::p("• Precisión (Precision): de los aprobados, cuántos eran realmente buenos ",
+                    "\\[ Precision = \\frac{TP}{TP+FP} \\]"),
+            shiny::p("• F1 Score: equilibrio entre precisión y sensibilidad ",
+                    "\\[ F1 = 2 \\cdot \\frac{Precision \\cdot Sensibilidad}{Precision + Sensibilidad} \\]"),
+
+            shiny::p("El gráfico te muestra cómo varían estas métricas cuando cambias ",
+                    "el valor del umbral \\(\\tau\\). Al bajar \\(\\tau\\), apruebas más clientes ",
+                    "(mayor sensibilidad, menor especificidad). Al subirlo, apruebas menos ",
+                    "clientes (mayor especificidad, menor sensibilidad)."),
+
             shiny::h4("Selección de umbral sobre el score integrado"),
             shiny::p("El score integrado favorece alta aceptación y bajo riesgo: \\(\\text{score} = p(\\text{aceptar})\\times (1 - p(\\text{mora}))\\). Ajusta el umbral y compara métricas."),
             shiny::br(),

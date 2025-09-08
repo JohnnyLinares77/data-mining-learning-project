@@ -4,6 +4,7 @@ library(shiny)
 library(DT)
 library(cluster)  # para distancia/silueta en M1
 library(pROC)     # para AUC en M2
+library(shinyjs)
 
 # ---- Sourcing: Módulo 1
 source("R/gen_datos.R")

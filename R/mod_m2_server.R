@@ -1,20 +1,15 @@
 # R/mod_m2_server.R
 # -------------------------------------------------------------------
 # Server del Módulo 2 – Scoring (Regresión Logística)
-# Requiere: logit_helpers.R, persistencia_m2.R y (opcionalmente) preprocess_inputs() del Módulo 1
-# Argumentos:
-#   - datos_reactivos: reactive() que retorna una lista con data.frames base (demograficas, financieras, comp_historico, clientes, etc.)
-#   - id_sim: identificador de simulación (string o número)
 # -------------------------------------------------------------------
 
 mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
   ns <- session$ns
 
   # ----------------------------
-  # Utilitarios internos
+  # Utilitarios internos (idénticos a tu versión)
   # ----------------------------
   get_base_df <- function(d){
-    # Une componentes clave por id_cliente (incluye 'clientes' para cluster_id)
     if (!is.null(d$base)) return(d$base)
     keys <- c("demograficas","financieras","comp_historico","clientes")
     tabs <- Filter(Negate(is.null), d[keys])
@@ -22,20 +17,17 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
     Reduce(function(a,b) merge(a,b, by = "id_cliente", all = TRUE), tabs)
   }
 
-  # construye matriz de diseño (numéricas estandarizadas + dummies) y deja mapa termino->variable
   make_design <- function(df, vars, id_col = "id_cliente"){
     stopifnot(id_col %in% names(df))
     keep <- intersect(vars, names(df))
     if (length(keep) == 0) stop("No hay variables disponibles en los datos con los nombres seleccionados.")
     X <- df[, keep, drop = FALSE]
 
-    # numéricas -> escalar; categóricas -> factor y one-hot
     is_num <- sapply(X, is.numeric)
     X_num <- X[, is_num, drop = FALSE]
     X_cat <- X[, !is_num, drop = FALSE]
 
     if (ncol(X_num) > 0) {
-      # ignora columnas constantes para evitar NaNs en scale
       const <- vapply(X_num, function(z) length(unique(z[!is.na(z)])) <= 1, logical(1))
       if (any(const)) X_num <- X_num[, !const, drop = FALSE]
       if (ncol(X_num) > 0) {
@@ -51,7 +43,6 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
 
     X_final <- cbind(X_num, X_cat)
 
-    # mapa termino->variable base
     term_map <- setNames(rep(colnames(X_num), times = 1), colnames(X_num))
     if (ncol(X_cat) > 0) {
       for (v in names(df[, keep, drop = FALSE])) {
@@ -69,7 +60,6 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
     X_final
   }
 
-  # Si no existen etiquetas reales, simula aceptación y mora con una relación plausible
   simular_etiquetas <- function(df){
     s_buro <- if ("score_buro" %in% names(df)) scale(df$score_buro) else 0
     ingreso <- if ("ingreso_verificado" %in% names(df)) scale(df$ingreso_verificado) else 0
@@ -86,13 +76,11 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
     list(acepta = acepta, mora = mora)
   }
 
-  # Helper: signo por variable usando la tabla formateada (.format_coef_table)
   .signos_por_variable <- function(model, term_map){
     s <- summary(model)
     tb <- .format_coef_table(s$coefficients, term_map = term_map)
     tb <- tb[tb$Variable != "(Intercept)", , drop = FALSE]
     if (!nrow(tb)) return(setNames(character(0), character(0)))
-    # Toma el coeficiente de menor p-valor por Variable
     tb$idx_min_p <- ave(tb$p_value, tb$Variable, FUN = function(x) as.integer(rank(x, ties.method = "first") == 1))
     tb_min <- tb[tb$idx_min_p == 1, c("Variable","Estimado")]
     setNames(ifelse(tb_min$Estimado >= 0, "+", "−"), tb_min$Variable)
@@ -112,21 +100,16 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
     score = NULL, thr_grid = NULL,
     thr_current = 0.5, metrics_current = NULL,
     df_scores = NULL,
-    # selección interactiva
     var_rank_accept = NULL, var_rank_mora = NULL,
     vars_accept_keep = NULL, vars_mora_keep = NULL,
     term_map_accept = NULL, term_map_mora = NULL,
     # Interpretación
-    interp_ok = FALSE
+    interp_ok = FALSE,
+    interp_target = NULL      # <<< NUEVO: variable asignada aleatoriamente
   )
 
-  # Deshabilita pestaña "Selección" al iniciar
-  shiny::observe({
-    shinyjs::disable(selector = sprintf('a[data-value="%s"]', "Selección"))
-  })
-
   # ----------------------------
-  # Entrenamiento inicial de modelos (con variables candidatas del panel izquierdo)
+  # Entrenamiento inicial
   # ----------------------------
   observeEvent(input$train_models, {
     shiny::req(datos_reactivos)
@@ -139,7 +122,6 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
       base <- get_base_df(d)
       rv$base <- base
 
-      # Etiquetas reales si existen, sino simuladas
       if (!all(c("acepta","mora") %in% names(base))) {
         labs <- simular_etiquetas(base)
         base$acepta <- labs$acepta
@@ -150,7 +132,6 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
         shiny::need(length(input$vars) > 0, "Selecciona al menos una variable.")
       )
 
-      # Diseño para cada modelo (pueden ser iguales al inicio)
       Xacc <- make_design(base, input$vars)
       Xm   <- make_design(base, input$vars)
 
@@ -164,7 +145,6 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
 
       incProgress(0.2)
 
-      # Modelos logísticos
       acc <- try(run_logit(Xacc, rv$y_accept, term_map = rv$term_map_accept), silent = TRUE)
       mor <- try(run_logit(Xm,   rv$y_mora,   term_map = rv$term_map_mora),   silent = TRUE)
 
@@ -180,16 +160,13 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
       rv$auc_accept   <- acc$auc
       rv$auc_mora     <- mor$auc
 
-      # Tablas y ranking por p-valor (para la selección interactiva)
       rv$var_rank_accept <- summarize_p_by_var(acc$coefs)
       rv$var_rank_mora   <- summarize_p_by_var(mor$coefs)
 
-      # Selección inicial: p <= alpha
       alpha <- if (is.null(input$alpha)) 0.05 else input$alpha
       rv$vars_accept_keep <- rv$var_rank_accept$Variable[rv$var_rank_accept$p_min <= alpha]
       rv$vars_mora_keep   <- rv$var_rank_mora$Variable[rv$var_rank_mora$p_min <= alpha]
 
-      # Score integrado y evaluación inicial (etiqueta "buena" = no mora)
       rv$score <- compute_integrated_score(rv$probs_accept, rv$probs_mora)
       rv$thr_grid <- evaluate_thresholds(rv$score, 1 - rv$y_mora)
       rv$metrics_current <- evaluate_metrics(rv$score, 1 - rv$y_mora, rv$thr_current)
@@ -198,26 +175,45 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
       shiny::showNotification("Modelos entrenados y score integrado calculado.", type = "message")
       shiny::updateTabsetPanel(session, "tabs", selected = "Modelos")
 
-      # ===== Poblar opciones de la pestaña Interpretación =====
-      vars_disponibles <- sort(unique(c(rv$var_rank_accept$Variable, rv$var_rank_mora$Variable)))
-      shiny::updateCheckboxGroupInput(session, "interp_sig_vars",
-                                      choices = vars_disponibles, selected = character(0))
-      shiny::updateSelectInput(session, "interp_risk_must",
-                               choices = vars_disponibles, selected = NULL)
+      # ===== Poblar opciones de la pestaña Interpretación (SOLO ACEPTACIÓN) =====
+      vars_acc <- sort(unique(rv$var_rank_accept$Variable))
+      vars_acc <- vars_acc[vars_acc != "(Intercept)"]
 
-      output$interp_signos_ui <- shiny::renderUI({
-        lapply(vars_disponibles, function(v)
-          shiny::selectInput(ns(paste0("sign_", v)),
-                             label = paste("Signo de", v),
-                             choices = c("+" = "+", "−" = "−"),
-                             selected = NULL, width = "220px"))
-      })
-      # ========================================================
+      shiny::updateCheckboxGroupInput(session, "interp_sig_vars",
+                                      choices = vars_acc, selected = character(0))
     })
   }, ignoreInit = TRUE)
 
   # ----------------------------
-  # Re-entrenar con selección interactiva (por p-valor / forzadas)
+  # Asignación aleatoria de variable para interpretación (se fija por sesión)
+  # ----------------------------
+  observeEvent(list(rv$fit_accept, rv$var_rank_accept), {
+    shiny::req(rv$fit_accept, rv$var_rank_accept)
+
+    candidatas <- sort(unique(rv$var_rank_accept$Variable))
+    candidatas <- candidatas[candidatas != "(Intercept)"]
+    shiny::validate(shiny::need(length(candidatas) > 0, "No hay variables disponibles para asignar."))
+
+    if (is.null(rv$interp_target) || !(rv$interp_target %in% candidatas)) {
+      set.seed(as.integer(as.numeric(Sys.time())) %% .Machine$integer.max)
+      rv$interp_target <- sample(candidatas, 1)
+    }
+
+    output$interp_var_target <- shiny::renderUI({
+      shiny::tagList(
+        shiny::p(shiny::strong(rv$interp_target)),
+        shiny::helpText("Escribe tu interpretación SOLO sobre esta variable.")
+      )
+    })
+
+    shiny::updateTextAreaInput(
+      session, inputId = ns("interp_text"),
+      placeholder = sprintf("Redacta tu interpretación centrada en: '%s'…", rv$interp_target)
+    )
+  })
+
+  # ----------------------------
+  # Re-entrenar con selección interactiva (igual que antes)
   # ----------------------------
   observeEvent(input$retrain_selected, {
     shiny::req(rv$base, rv$y_accept, rv$y_mora)
@@ -225,21 +221,18 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
     shiny::withProgress(message = "Reentrenando con selección...", value = 0, {
       incProgress(0.1)
 
-      # Candidatas originales
       cand <- intersect(input$vars, names(rv$base))
 
-      # Aceptación
       keep_acc <- unique(c(
         intersect(input$keep_vars_accept, cand),
         intersect(input$force_keep_accept, cand)
       ))
-      if (length(keep_acc) == 0) keep_acc <- cand # fallback para no vaciar el modelo
+      if (length(keep_acc) == 0) keep_acc <- cand
 
       Xacc <- make_design(rv$base, keep_acc)
       rv$X_accept <- Xacc
       rv$term_map_accept <- attr(Xacc, "term_map")
 
-      # Mora
       keep_mor <- unique(c(
         intersect(input$keep_vars_mora, cand),
         intersect(input$force_keep_mora, cand)
@@ -252,7 +245,6 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
 
       incProgress(0.3)
 
-      # Re-fit
       acc <- try(run_logit(Xacc, rv$y_accept, term_map = rv$term_map_accept), silent = TRUE)
       mor <- try(run_logit(Xm,   rv$y_mora,   term_map = rv$term_map_mora),   silent = TRUE)
       if (inherits(acc, "try-error") || inherits(mor, "try-error")) {
@@ -270,7 +262,6 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
       rv$var_rank_accept <- summarize_p_by_var(acc$coefs)
       rv$var_rank_mora   <- summarize_p_by_var(mor$coefs)
 
-      # Recalcular score/umbrales
       rv$score <- compute_integrated_score(rv$probs_accept, rv$probs_mora)
       rv$thr_grid <- evaluate_thresholds(rv$score, 1 - rv$y_mora)
       rv$metrics_current <- evaluate_metrics(rv$score, 1 - rv$y_mora, rv$thr_current)
@@ -281,7 +272,7 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
   }, ignoreInit = TRUE)
 
   # ----------------------------
-  # Salidas: tablas de coeficientes y AUC (4 decimales)
+  # Tablas y AUC
   # ----------------------------
   output$tbl_coefs_accept <- DT::renderDT({
     shiny::req(rv$fit_accept)
@@ -302,7 +293,7 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
   output$auc_accept <- shiny::renderText({ sprintf("%.4f", rv$auc_accept) })
   output$auc_mora   <- shiny::renderText({ sprintf("%.4f", rv$auc_mora) })
 
-  # Listas de selección por p-valor (se actualizan luego de entrenar)
+  # Listas por p-valor (igual)
   observe({
     shiny::req(rv$var_rank_accept, rv$var_rank_mora)
     alpha <- if (is.null(input$alpha)) 0.05 else input$alpha
@@ -316,80 +307,98 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
     shiny::updateCheckboxGroupInput(session, "keep_vars_mora", choices = choices_mor, selected = sel_mor)
   })
 
+  # ============================
+  # HELPER: interpretación automática/correcta para la variable asignada
+  # ============================
+  .build_interpretacion_var <- function(model, term_map, var, alpha = 0.05){
+    s  <- summary(model)
+    tb <- .format_coef_table(s$coefficients, term_map = term_map)
+    tb <- tb[tb$Variable != "(Intercept)", , drop = FALSE]
+
+    sub <- tb[tb$Variable == var, , drop = FALSE]
+    if (!nrow(sub)) {
+      return(list(texto = sprintf("No se encontró información de coeficientes para '%s'.", var),
+                  ok = FALSE))
+    }
+
+    # Tomamos el término más representativo (menor p-valor)
+    i    <- which.min(sub$p_value)
+    fila <- sub[i, ]
+
+    beta <- as.numeric(fila$Estimado)
+    pv   <- as.numeric(fila$p_value)
+    or   <- exp(beta)
+    dir  <- if (beta >= 0) "aumenta" else "disminuye"
+    sig  <- if (is.finite(pv) && pv < alpha) "es significativa" else "no es significativa"
+
+    # Categórica si hay >1 término o el término != nombre de la Variable
+    es_cat <- nrow(sub) > 1 || (!identical(fila$Termino, var) && grepl(paste0("^", var), fila$Termino))
+
+    if (es_cat) {
+      texto <- sprintf(
+        "Para '%s' (categórica), el término '%s' tiene coeficiente %.4f (p = %.4f) y %s: respecto a la categoría base, %s las odds de aceptación en %.1f%% (OR = %.3f).",
+        var, fila$Termino, beta, pv, sig, dir, (or - 1)*100, or
+      )
+    } else {
+      texto <- sprintf(
+        "Para '%s' (numérica estandarizada), el coeficiente es %.4f (p = %.4f) y %s: un incremento de 1 desviación estándar en '%s' %s las odds de aceptación en %.1f%% (OR = %.3f).",
+        var, beta, pv, sig, var, dir, (or - 1)*100, or
+      )
+    }
+
+    list(texto = texto, ok = is.finite(pv))
+  }
+
   # ----------------------------
-  # Pestaña INTERPRETACIÓN: validación y desbloqueo de Selección
+  # Pestaña INTERPRETACIÓN: validación (SIN puntaje, SIN regla de negocio, SIN salto de pestaña)
   # ----------------------------
   observeEvent(input$interp_enviar, {
-    shiny::req(rv$fit_accept, rv$fit_mora, rv$var_rank_accept, rv$var_rank_mora)
+    shiny::req(rv$fit_accept, rv$var_rank_accept, rv$interp_target)
 
     alpha <- if (is.null(input$alpha)) 0.05 else input$alpha
 
-    # 1) Variables significativas (clave) en cualquiera de los dos modelos
-    sig_acc <- rv$var_rank_accept$Variable[rv$var_rank_accept$p_min < alpha]
-    sig_mor <- rv$var_rank_mora$Variable[rv$var_rank_mora$p_min   < alpha]
-    clave_sig <- sort(unique(c(sig_acc, sig_mor)))
+    # (A) Significancia (feedback general)
+    clave_sig <- sort(rv$var_rank_accept$Variable[rv$var_rank_accept$p_min < alpha])
+    clave_sig <- clave_sig[clave_sig != "(Intercept)"]
 
     marcadas <- input$interp_sig_vars
     if (is.null(marcadas)) marcadas <- character(0)
     marcadas <- sort(unique(marcadas))
     ok_sig <- identical(marcadas, clave_sig)
 
-    # 2) Signos por variable (usa aceptación y si no, mora)
-    signos_acc <- .signos_por_variable(rv$fit_accept, rv$term_map_accept)
-    signos_mor <- .signos_por_variable(rv$fit_mora,   rv$term_map_mora)
-    signos_ok <- TRUE
-    for (v in clave_sig) {
-      sel <- input[[ns(paste0("sign_", v))]]
-      if (is.null(sel)) next
-      signo_ref <- if (v %in% names(signos_acc)) signos_acc[[v]] else signos_mor[[v]]
-      if (is.null(signo_ref) || length(signo_ref) == 0) next
-      signos_ok <- signos_ok && (sel == signo_ref)
-    }
+    # (B) Interpretación escrita SOLO para la variable asignada
+    v_target <- rv$interp_target
+    texto <- trimws(input$interp_text %||% "")
+    texto_ok <- (nchar(texto) >= 40)  # solo validamos longitud mínima
 
-    # 3) Regla de negocio (ajusta según políticas)
-    obligatorias <- c("score_buro")  # puedes pasar esto como parámetro o leer de config
-    ok_riesgo <- !is.null(input$interp_risk_must) && input$interp_risk_must %in% obligatorias
-
-    # 4) Interpretación escrita mínima
-    texto_ok <- nchar(trimws(input$interp_text)) >= 40
-
-    # Puntaje
-    puntaje <- (ok_sig*45) + (signos_ok*35) + (ok_riesgo*10) + (texto_ok*10)
-
-    # Referencia/clave textual
-    ref_text <- paste0(
-      "Variables significativas con α=", sprintf("%.3f", alpha), ": ",
-      if (length(clave_sig)) paste(clave_sig, collapse = ", ") else "ninguna", ". ",
-      "Variable obligatoria por negocio: ", paste(obligatorias, collapse = ", "), ". ",
-      "Recuerda que variables con p ≥ α pueden mantenerse por interpretabilidad, cumplimiento o requisitos operativos."
+    # (C) Interpretación AUTOMÁTICA (correcta) para comparación
+    auto <- .build_interpretacion_var(
+      model    = rv$fit_accept,
+      term_map = rv$term_map_accept,
+      var      = v_target,
+      alpha    = alpha
     )
+    ref_text <- auto$texto   # <<-- La "Interpretación de referencia" ahora es la correcta
 
     output$interp_feedback <- shiny::renderUI({
       shiny::tagList(
-        shiny::p(if (ok_sig) "✓ Selección de variables significativas correcta."
-                 else shiny::HTML("✗ Revisa las variables con p&nbsp;<&nbsp;α.")),
-        shiny::p(if (signos_ok) "✓ Signos de los coeficientes correctos."
-                 else "✗ Verifica el signo de cada β estimado."),
-        shiny::p(if (ok_riesgo) "✓ Regla de negocio identificada correctamente."
-                 else "✗ Indica la variable obligatoria por Gerencia de Riesgos."),
-        shiny::p(if (texto_ok) "✓ Interpretación escrita recibida."
-                 else "✗ Amplía tu interpretación (mínimo 40 caracteres)."),
-        shiny::p(shiny::strong(sprintf("Puntaje: %d/100", puntaje))),
+        shiny::h5("Reporte de aciertos/errores"),
+        shiny::p(if (ok_sig) "✓ Significancia correcta" else "✗ Revisa p < α"),
+        shiny::p(if (texto_ok) sprintf("✓ Interpretación de '%s' recibida", v_target)
+                 else sprintf("✗ Amplía tu interpretación de '%s' (mín. 40 caracteres)", v_target)),
         shiny::hr(),
-        shiny::strong("Interpretación de referencia"),
-        shiny::p(ref_text)
+        shiny::strong("Interpretación de referencia (correcta)"),
+        shiny::p(ref_text),
+        shiny::hr(),
+        shiny::strong("Variables con p < α"),
+        shiny::p(if (length(clave_sig)) paste(clave_sig, collapse = ", ") else "ninguna")
       )
     })
-
-    rv$interp_ok <- puntaje >= 70
-    if (rv$interp_ok) {
-      shinyjs::enable(selector = sprintf('a[data-value="%s"]', "Selección"))
-      shiny::updateTabsetPanel(session, inputId = "tabs", selected = "Selección")
-    }
+    # Sin habilitar ni saltar a la pestaña "Selección".
   })
 
   # ----------------------------
-  # Evaluación de umbrales
+  # Umbrales, resultados y persistencia (idéntico a tu versión)
   # ----------------------------
   observeEvent(input$eval_thresholds, {
     shiny::req(rv$score, rv$y_mora)
@@ -408,15 +417,26 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
     shiny::req(rv$thr_grid)
     par(mar = c(4,4,1,1))
     df <- rv$thr_grid
+
+    # Colores para cada curva
+    col_acc  <- "blue"
+    col_sens <- "red"
+    col_esp  <- "green"
+    col_f1   <- "purple"
+
     plot(df$thr, df$accuracy, type = "l", ylab = "Métrica", xlab = "Umbral",
-         ylim = range(df[,c("accuracy","sensibilidad","especificidad","f1")], na.rm = TRUE))
-    lines(df$thr, df$sensibilidad)
-    lines(df$thr, df$especificidad)
-    lines(df$thr, df$f1)
-    abline(v = rv$thr_current, lty = 2)
+        ylim = range(df[,c("accuracy","sensibilidad","especificidad","f1")], na.rm = TRUE),
+        col = col_acc, lwd = 2)
+    lines(df$thr, df$sensibilidad, col = col_sens, lwd = 2)
+    lines(df$thr, df$especificidad, col = col_esp, lwd = 2)
+    lines(df$thr, df$f1, col = col_f1, lwd = 2)
+    abline(v = rv$thr_current, lty = 2, col = "black")
+
     legend("bottomleft", bty = "n",
-           legend = c("Accuracy","Sensibilidad","Especificidad","F1","Umbral actual"),
-           lty = c(1,1,1,1,2))
+          legend = c("Accuracy","Sensibilidad","Especificidad","F1","Umbral actual"),
+          col = c(col_acc, col_sens, col_esp, col_f1, "black"),
+          lty = c(1,1,1,1,2),
+          lwd = c(2,2,2,2,1))
   })
 
   output$tbl_thr_metrics <- DT::renderDT({
@@ -425,9 +445,6 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
       DT::formatRound(c("thr","accuracy","sensibilidad","especificidad","precision","f1"), 4)
   })
 
-  # ----------------------------
-  # Resultados finales por cliente (4 decimales)
-  # ----------------------------
   observeEvent(list(rv$score, rv$thr_current), {
     shiny::req(rv$score, rv$id_cliente)
     decision <- as.integer(rv$score >= rv$thr_current)
@@ -452,13 +469,8 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
       DT::formatRound(c("p_accept","p_mora","score"), 4)
   })
 
-  # ----------------------------
-  # Persistencia / Exportación
-  # ----------------------------
   observeEvent(input$confirmar, {
     shiny::req(rv$metrics_current, rv$df_scores)
-
-    # guardar métricas agregadas (sobre score integrado vs no-mora)
     m <- rv$metrics_current
     persist_eval_m2(
       id_sim = id_sim,
@@ -467,14 +479,7 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
       accuracy = m$accuracy, sensibilidad = m$sensibilidad,
       especificidad = m$especificidad, precision = m$precision, f1 = m$f1
     )
-
-    # guardar resultados por cliente
-    persist_clientes_scores(
-      id_sim = id_sim,
-      df_clientes = rv$df_scores
-    )
-
-    # guardar variables seleccionadas
+    persist_clientes_scores(id_sim = id_sim, df_clientes = rv$df_scores)
     persist_variables_m2(
       id_sim = id_sim,
       vars_candidatas = input$vars,
@@ -482,7 +487,6 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
       vars_mora_keep   = input$keep_vars_mora,
       alpha_sig = input$alpha
     )
-
     shiny::showNotification("Resultados guardados en data/*.csv", type = "message")
   }, ignoreInit = TRUE)
 
@@ -500,7 +504,7 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
     rv$vars_accept_keep <- NULL; rv$vars_mora_keep <- NULL
     rv$term_map_accept <- NULL; rv$term_map_mora <- NULL
     rv$interp_ok <- FALSE
-    shinyjs::disable(selector = sprintf('a[data-value="%s"]', "Selección"))
+    rv$interp_target <- NULL
     shiny::showNotification("Módulo 2 reiniciado.", type = "message")
   }, ignoreInit = TRUE)
 
