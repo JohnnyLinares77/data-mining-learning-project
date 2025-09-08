@@ -82,31 +82,33 @@ mod_m2_ui <- function(id){
             shiny::tags$hr()
           ),
 
-          # ---- Tab 2: Interpretación
+          # ---- Tab 2: Análisis
           shiny::tabPanel(
             title = "Análisis",
             shiny::h4("Análisis de variables del modelo"),
             shiny::helpText("Responde y envía para habilitar la pestaña 'Selección'."),
 
             shiny::h5("Modelo: Probabilidad de Aceptación de Crédito"),
-            DT::DTOutput(ns("tbl_coefs_accept")),
-            shiny::p(shiny::strong("AUC aceptación: "), shiny::textOutput(ns("auc_accept"), inline = TRUE)),
+            DT::DTOutput(ns("tbl_coefs_accept_an")),          
+            shiny::p(shiny::strong("AUC aceptación: "),
+                    shiny::textOutput(ns("auc_accept"), inline = TRUE)),
             shiny::tags$hr(),
 
             shiny::checkboxGroupInput(ns("interp_sig_vars"),
-                                      label = "Marca las variables significativas con el α actual (p < α):",
-                                      choices = c(), selected = c()),
-
-            shiny::h5("Variable asignada para interpretar:"),
-            shiny::uiOutput(ns("interp_var_target")),
+              label   = "Marca las variables significativas con el α actual (p < α):",
+              choices = c(), selected = c()
+            ),
+            shiny::uiOutput(ns("interp_signos_ui")),
             shiny::textAreaInput(ns("interp_text"),
-                                 "Escriba la interpretación del coeficiente de la variable:",
-                                 placeholder = "Redacta la interpretación del coeficiente, considere significancia y signo... ",
-                                 width = "100%", height = "120px"),
+              "Escribe tu interpretación del coeficiente de la variable asignada:",
+              placeholder = "Redacta tu interpretación...",
+              width = "100%", height = "120px"
+            ),
             shiny::actionButton(ns("interp_enviar"), "Enviar interpretación"),
             shiny::tags$hr(),
             shiny::uiOutput(ns("interp_feedback"))
           ),
+
 
           # ---- Tab 3: Selección
           shiny::tabPanel(
@@ -115,7 +117,7 @@ mod_m2_ui <- function(id){
             shiny::h4("Modelo de Probabilidad de Aceptación de Crédito"),
             shiny::fluidRow(
               shiny::column(6,
-                DT::DTOutput(ns("tbl_coefs_accept")),
+                DT::DTOutput(ns("tbl_coefs_accept_sel")),
                 shiny::tags$strong("Selección de variables a mantener"),
                 shiny::checkboxGroupInput(ns("keep_vars_accept"), label = NULL, choices = c())
               ),

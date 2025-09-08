@@ -274,9 +274,9 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
   # ----------------------------
   # Tablas y AUC
   # ----------------------------
-  output$tbl_coefs_accept <- DT::renderDT({
-    shiny::req(rv$fit_accept)
-    s <- summary(rv$fit_accept)
+  output$tbl_coefs_accept_an  <- output$tbl_coefs_accept_sel <- DT::renderDT({
+    req(rv$fit_accept)
+    s  <- summary(rv$fit_accept)
     tb <- .format_coef_table(s$coefficients, term_map = rv$term_map_accept)
     DT::datatable(tb, rownames = FALSE, options = list(pageLength = 8)) |>
       DT::formatRound(c("Estimado","ErrorStd","z","p_value"), 4)
