@@ -202,7 +202,6 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
     output$interp_var_target <- shiny::renderUI({
       shiny::tagList(
         shiny::p(shiny::strong(rv$interp_target)),
-        shiny::helpText("Escribe tu interpretación SOLO sobre esta variable.")
       )
     })
 

@@ -34,12 +34,41 @@ mod_m2_ui <- function(id){
             title = "Intro.",
             shiny::br(),
             shiny::h4("Propósito"),
-            shiny::p("Este módulo estima, para cada cliente, la probabilidad de aceptar la oferta y la probabilidad de incurrir en mora mediante regresión logística. Se reportan los coeficientes con sus p-valores (4 decimales), se construye un score integrado que pondera aceptación y riesgo, y se selecciona un umbral de decisión."),
-            shiny::h5("¿Por qué regresión logística aquí?"),
-            shiny::p("Porque la variable respuesta es binaria en ambos casos: \\(Y_{acc}\\in\\{0,1\\}\\) para aceptar/no aceptar y \\(Y_{mor}\\in\\{0,1\\}\\) para mora/no mora. La función de enlace logística modela:"),
+            shiny::p("Este módulo estima, para cada cliente, dos probabilidades clave: ",
+                    shiny::strong("aceptar la oferta de crédito"), " y ",
+                    shiny::strong("incurrir en mora"), " mediante regresión logística. 
+                    Con estos resultados se construye un score integrado que pondera aceptación y riesgo, 
+                    y finalmente se selecciona un umbral de decisión para apoyar la gestión comercial."),
+            
+            shiny::h4("Definiciones básicas"),
+            shiny::tags$ul(
+              shiny::tags$li("La variable respuesta es binaria: \\(Y=1\\) indica que el evento ocurre (aceptación o mora), 
+                            y \\(Y=0\\) indica que no ocurre."),
+              shiny::tags$li("La ", shiny::strong("probabilidad de éxito"), " se denota como \\(p = \\Pr(Y=1)\\)."),
+              shiny::tags$li("Las ", shiny::strong("odds"), " son la razón \\(\\tfrac{p}{1-p}\\), que compara éxito contra fracaso."),
+              shiny::tags$li("El ", shiny::strong("logit"), " es el logaritmo natural de las odds: 
+                            \\(\\text{logit}(p)=\\log\\tfrac{p}{1-p}\\). 
+                            Es la escala lineal donde se estiman los coeficientes.")
+            ),
+            
+            shiny::h4("Funcionamiento del modelo"),
+            shiny::p("La regresión logística utiliza la función sigmoide para mapear cualquier combinación lineal de variables predictoras 
+                    a un valor entre 0 y 1, interpretable como probabilidad:"),
             shiny::helpText("$$\\Pr(Y=1 \\mid X)=\\frac{1}{1+e^{-(\\beta_0+\\beta_1 x_1+\\cdots+\\beta_p x_p)}}$$"),
-            shiny::p("Se trata de aprendizaje supervisado: entrenamos con etiquetas (reales o simuladas) y evaluamos AUC y métricas por umbral."),
-            shiny::h5("Flujo general"),
+            shiny::p("Cada coeficiente \\(\\beta_j\\) mide cómo cambia el logit (y, por tanto, las odds) 
+                    cuando la variable correspondiente aumenta en una unidad, manteniendo las demás constantes."),
+
+            shiny::h4("Contexto del problema de negocio"),
+            shiny::p("En la campaña de préstamos personales, la entidad financiera necesita balancear dos objetivos:"),
+            shiny::tags$ul(
+              shiny::tags$li(shiny::strong("Maximizar aceptación:"), " identificar clientes con alta probabilidad de tomar el crédito."),
+              shiny::tags$li(shiny::strong("Controlar riesgo de mora:"), " evitar otorgar créditos a clientes con alta probabilidad de incumplimiento.")
+            ),
+            shiny::p("El uso de regresión logística permite integrar ambas probabilidades en un ",
+                    shiny::strong("score único"), 
+                    " que facilita la segmentación, la toma de decisiones y la fijación de políticas de riesgo."),
+            
+            shiny::h4("Flujo general"),
             shiny::tags$ul(
               shiny::tags$li("Selecciona variables predictoras (incluye el cluster del Módulo 1)."),
               shiny::tags$li("Entrena los modelos logísticos de Aceptación y Mora."),
@@ -49,6 +78,7 @@ mod_m2_ui <- function(id){
               shiny::tags$li("Evalúa métricas por umbral y confirma resultados.")
             )
           ),
+
 
           # ---- Tab 1: Significancia
           shiny::tabPanel(
@@ -98,7 +128,73 @@ mod_m2_ui <- function(id){
               label   = "Marca las variables significativas con el α actual (p < α):",
               choices = c(), selected = c()
             ),
-            shiny::uiOutput(ns("interp_signos_ui")),
+
+
+
+          # ---- Explicación didáctica (agrupada por tema con bullets y MathJax)
+          shiny::h4(shiny::strong("Cómo interpretar los coeficientes")),
+
+          # --- Tema 1: Idea general
+          shiny::h5("Idea general"),
+          shiny::tags$ul(
+            shiny::tags$li("En regresión logística, los coeficientes actúan sobre el logit (logaritmo de las odds), no directamente sobre la probabilidad."),
+            shiny::tags$li("Para una interpretación más intuitiva usamos el odds ratio (\\(OR = e^{\\beta}\\)), que indica cómo cambian las odds al aumentar una variable en una unidad.")
+          ),
+
+          # --- Tema 2: Odds y Odds Ratio
+          shiny::h5("Odds y Odds Ratio"),
+          shiny::tags$ul(
+            shiny::tags$li("Las odds se definen como: \\( \\text{odds} = \\frac{p}{1-p} \\)."),
+            shiny::tags$li("Ejemplo: si \\(p = 0.8\\), entonces \\(\\text{odds} = 4\\): por cada 1 'no', hay 4 'sí'."),
+            shiny::tags$li("El OR muestra el cambio multiplicativo en las odds: si \\(\\beta = 0.20\\), entonces \\(OR = e^{0.20} \\approx 1.22\\) (aumento de 22%).")
+          ),
+
+          # --- Tema 3: Intercepto
+          shiny::h5("Intercepto"),
+          shiny::tags$ul(
+            shiny::tags$li("Representa el logit y la probabilidad base cuando todas las variables valen 0 o están en la categoría de referencia."),
+            shiny::tags$li("Sirve como punto de partida del modelo, pero rara vez es lo más importante en la interpretación práctica.")
+          ),
+
+          # --- Tema 4: Variables numéricas
+          shiny::h5("Variables numéricas"),
+          shiny::tags$ul(
+            shiny::tags$li("El coeficiente \\(\\beta\\) indica el cambio en el logit por cada unidad adicional."),
+            shiny::tags$li("En términos de OR: \\(OR = e^{\\beta}\\). Ejemplo: si \\(\\beta = 0.05\\), entonces \\(OR \\approx 1.05\\) (odds aumentan 5%).")
+          ),
+
+          # --- Tema 5: Variables categóricas
+          shiny::h5("Variables categóricas"),
+          shiny::tags$ul(
+            shiny::tags$li("Se interpretan respecto a una categoría base."),
+            shiny::tags$li("Si \\(OR > 1\\), la categoría tiene mayores odds que la base; si \\(OR < 1\\), menores."),
+            shiny::tags$li("Ejemplo: frente a 'mujer' (base), si 'hombre' tiene OR = 1.35 ⇒ 35% más odds.")
+          ),
+
+          # --- Tema 6: Signo, magnitud y significancia
+          shiny::h5("Signo, magnitud y significancia"),
+          shiny::tags$ul(
+            shiny::tags$li("Signo: positivo ⇒ aumenta odds; negativo ⇒ disminuye."),
+            shiny::tags$li("Magnitud: OR cercano a 1 implica efecto pequeño."),
+            shiny::tags$li("Evidencia estadística: revisar p < α y el intervalo de confianza (si incluye 1, el efecto puede no ser concluyente).")
+          ),
+
+          # --- Tema 7: Errores comunes
+          shiny::h5("Errores comunes"),
+          shiny::tags$ul(
+            shiny::tags$li("No interpretar \\(\\beta\\) como cambio directo en la probabilidad."),
+            shiny::tags$li("En variables numéricas, especificar siempre la unidad."),
+            shiny::tags$li("En categóricas, mencionar la categoría de referencia."),
+            shiny::tags$li("No concluir sin considerar p-valor e intervalo de confianza.")
+          ),
+
+
+
+
+
+
+            shiny::h4(shiny::strong("Variable Asignada:")),
+            shiny::uiOutput(ns("interp_var_target")),
             shiny::textAreaInput(ns("interp_text"),
               "Escribe tu interpretación del coeficiente de la variable asignada:",
               placeholder = "Redacta tu interpretación...",
