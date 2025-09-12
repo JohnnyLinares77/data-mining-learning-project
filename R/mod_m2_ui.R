@@ -113,8 +113,8 @@ mod_m2_ui <- function(id){
           # ---- Tab 3: Selección
           shiny::tabPanel(
             title = "Selección",
-            shiny::h5("Selección de variables y reentrenamiento"),
-            shiny::h4("Modelo de Probabilidad de Aceptación de Crédito"),
+            shiny::h4("Selección de variables y reentrenamiento"),
+            shiny::h5("Modelo de Probabilidad de Aceptación de Crédito"),
             shiny::fluidRow(
               shiny::column(6,
                 DT::DTOutput(ns("tbl_coefs_accept_sel")),
@@ -138,8 +138,8 @@ mod_m2_ui <- function(id){
           # ---- Tab 4: Umbral (igual)
           shiny::tabPanel(
             title = "Umbral",
+            shiny::h4("Definición del umbral de clasificación"),
             shiny::withMathJax(),
-
             shiny::p("En este módulo trabajamos con dos modelos: ",
                     "uno para la probabilidad de aceptación ",
                     "\\(p(aceptar)\\) y otro para la probabilidad de mora ",
