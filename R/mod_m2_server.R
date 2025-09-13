@@ -399,17 +399,21 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
   # ----------------------------
   # Umbrales, resultados y persistencia (idéntico a tu versión)
   # ----------------------------
-  observeEvent(input$eval_thresholds, {
-    shiny::req(rv$score, rv$y_mora)
-    rv$thr_grid <- evaluate_thresholds(rv$score, 1 - rv$y_mora)
-    shiny::showNotification("Evaluación de umbrales completada.", type = "message")
-    shiny::updateTabsetPanel(session, "tabs", selected = "Umbral")
-  }, ignoreInit = TRUE)
-
   observeEvent(input$apply_thr, {
     shiny::req(rv$score, rv$y_mora)
+
+    # 1) Recalcula la malla de métricas para todos los umbrales
+    rv$thr_grid <- evaluate_thresholds(rv$score, 1 - rv$y_mora)
+
+    # 2) Aplica el umbral elegido en el slider
     rv$thr_current <- input$thr
+
+    # 3) Calcula las métricas en el umbral seleccionado
     rv$metrics_current <- evaluate_metrics(rv$score, 1 - rv$y_mora, input$thr)
+
+    # (opcional) feedback UI
+    shiny::showNotification("Umbral evaluado y aplicado.", type = "message")
+    shiny::updateTabsetPanel(session, "tabs", selected = "Umbral")
   }, ignoreInit = TRUE)
 
   output$plot_metrics <- shiny::renderPlot({
@@ -460,6 +464,29 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
     shiny::req(rv$score)
     hist(rv$score, breaks = 30, main = "Distribución del score integrado", xlab = "Score")
     abline(v = rv$thr_current, col = 2, lty = 2)
+  })
+
+  # Gráfico de torta: distribución Aprobados vs Rechazados
+  output$plot_pie <- shiny::renderPlot({
+    shiny::req(rv$df_scores)
+    decision_counts <- table(rv$df_scores$decision)   # 0 = Rechazado, 1 = Aprobado
+
+    # Asegura orden y etiquetas
+    # Si alguna clase no aparece, garantizamos ambos niveles 0 y 1
+    all_levels <- c("0","1")
+    decision_counts <- decision_counts[all_levels[all_levels %in% names(decision_counts)]]
+    names(decision_counts) <- c("Rechazados","Aprobados")[match(names(decision_counts), c("0","1"))]
+
+    # Etiquetas con porcentajes
+    total <- sum(decision_counts)
+    pct_labels <- paste0(names(decision_counts), " (", round(100*decision_counts/total, 1), "%)")
+
+    pie(
+      decision_counts,
+      labels = pct_labels,
+      main = "Distribución de decisiones",
+      clockwise = TRUE
+    )
   })
 
   output$tbl_scores <- DT::renderDT({

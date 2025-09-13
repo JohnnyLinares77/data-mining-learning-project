@@ -33,14 +33,14 @@ mod_m2_ui <- function(id){
           shiny::tabPanel(
             title = "Intro.",
             shiny::br(),
-            shiny::h4("Propósito"),
+            shiny::h4(shiny::strong("Propósito")),
             shiny::p("Este módulo estima, para cada cliente, dos probabilidades clave: ",
                     shiny::strong("aceptar la oferta de crédito"), " y ",
                     shiny::strong("incurrir en mora"), " mediante regresión logística. 
                     Con estos resultados se construye un score integrado que pondera aceptación y riesgo, 
                     y finalmente se selecciona un umbral de decisión para apoyar la gestión comercial."),
             
-            shiny::h4("Definiciones básicas"),
+            shiny::h4(shiny::strong("Definiciones básicas")),
             shiny::tags$ul(
               shiny::tags$li("La variable respuesta es binaria: \\(Y=1\\) indica que el evento ocurre (aceptación o mora), 
                             y \\(Y=0\\) indica que no ocurre."),
@@ -51,14 +51,14 @@ mod_m2_ui <- function(id){
                             Es la escala lineal donde se estiman los coeficientes.")
             ),
             
-            shiny::h4("Funcionamiento del modelo"),
+            shiny::h4(shiny::strong("Funcionamiento del modelo")),
             shiny::p("La regresión logística utiliza la función sigmoide para mapear cualquier combinación lineal de variables predictoras 
                     a un valor entre 0 y 1, interpretable como probabilidad:"),
             shiny::helpText("$$\\Pr(Y=1 \\mid X)=\\frac{1}{1+e^{-(\\beta_0+\\beta_1 x_1+\\cdots+\\beta_p x_p)}}$$"),
             shiny::p("Cada coeficiente \\(\\beta_j\\) mide cómo cambia el logit (y, por tanto, las odds) 
                     cuando la variable correspondiente aumenta en una unidad, manteniendo las demás constantes."),
 
-            shiny::h4("Contexto del problema de negocio"),
+            shiny::h4(shiny::strong("Contexto del problema de negocio")),
             shiny::p("En la campaña de préstamos personales, la entidad financiera necesita balancear dos objetivos:"),
             shiny::tags$ul(
               shiny::tags$li(shiny::strong("Maximizar aceptación:"), " identificar clientes con alta probabilidad de tomar el crédito."),
@@ -68,7 +68,7 @@ mod_m2_ui <- function(id){
                     shiny::strong("score único"), 
                     " que facilita la segmentación, la toma de decisiones y la fijación de políticas de riesgo."),
             
-            shiny::h4("Flujo general"),
+            shiny::h4(shiny::strong("Flujo general")),
             shiny::tags$ul(
               shiny::tags$li("Selecciona variables predictoras (incluye el cluster del Módulo 1)."),
               shiny::tags$li("Entrena los modelos logísticos de Aceptación y Mora."),
@@ -83,7 +83,7 @@ mod_m2_ui <- function(id){
           # ---- Tab 1: Significancia
           shiny::tabPanel(
             title = "Significancia",
-            shiny::h4("Significancia de Variables"),
+            shiny::h4(shiny::strong("Significancia de Variables")),
             shiny::withMathJax( shiny::p("El nivel de significancia \\(\\alpha\\) cumple un papel esencial como umbral de decisión para la selección de variables 
             en regresión logística. Define cuánta evidencia estadística se exige para considerar que una variable tiene efecto sobre la respuesta y controla la 
             rigurosidad con la que se aceptan o descartan predictores."), 
@@ -115,7 +115,7 @@ mod_m2_ui <- function(id){
           # ---- Tab 2: Análisis
           shiny::tabPanel(
             title = "Análisis",
-            shiny::h4("Análisis de variables del modelo"),
+            shiny::h4(shiny::strong("Análisis de variables del modelo")),
             shiny::helpText("Responde y envía para habilitar la pestaña 'Selección'."),
 
             shiny::h5("Modelo: Probabilidad de Aceptación de Crédito"),
@@ -189,10 +189,6 @@ mod_m2_ui <- function(id){
           ),
 
 
-
-
-
-
             shiny::h4(shiny::strong("Variable Asignada:")),
             shiny::uiOutput(ns("interp_var_target")),
             shiny::textAreaInput(ns("interp_text"),
@@ -209,7 +205,7 @@ mod_m2_ui <- function(id){
           # ---- Tab 3: Selección
           shiny::tabPanel(
             title = "Selección",
-            shiny::h4("Selección de variables y reentrenamiento"),
+            shiny::h4(shiny::strong("Selección de variables y reentrenamiento")),
             shiny::h5("Modelo de Probabilidad de Aceptación de Crédito"),
             shiny::fluidRow(
               shiny::column(6,
@@ -234,47 +230,81 @@ mod_m2_ui <- function(id){
           # ---- Tab 4: Umbral (igual)
           shiny::tabPanel(
             title = "Umbral",
-            shiny::h4("Definición del umbral de clasificación"),
             shiny::withMathJax(),
-            shiny::p("En este módulo trabajamos con dos modelos: ",
-                    "uno para la probabilidad de aceptación ",
-                    "\\(p(aceptar)\\) y otro para la probabilidad de mora ",
-                    "\\(p(mora)\\)."),
 
-            shiny::p("Definimos el score integrado como:",
-                    "\\[ \\text{score} = p(aceptar) \\times (1 - p(mora)) \\]"),
+            # 1) ¿Qué es el umbral?
+            shiny::h4(shiny::strong("¿Qué es el umbral de clasificación?")),
+            shiny::p("Cuando el modelo entrega probabilidades o un score, necesitamos una regla de decisión: 
+                    si el valor supera un umbral \\(\\tau\\), clasificamos como ", shiny::strong("Aprobado"),
+                    "; si no lo supera, como ", shiny::strong("Rechazado"), "."),
 
-            shiny::p("El umbral (threshold) \\(\\tau\\) define la regla de decisión: ",
-                    "si \\(\\text{score} \\geq \\tau\\), clasificamos al cliente como ",
-                    "APROBADO; de lo contrario, como RECHAZADO."),
+            # 2) Score integrado en el negocio
+            shiny::h4(shiny::strong("Score integrado en el negocio")),
+            shiny::p("Trabajamos con dos probabilidades: ",
+                    "\\(p(\\text{aceptar})\\) y \\(p(\\text{mora})\\). Para combinarlas definimos el score integrado:"),
+            shiny::helpText("$$\\text{score} = p(\\text{aceptar}) \\times \\big(1 - p(\\text{mora})\\big)$$"),
+            shiny::tags$ul(
+              shiny::tags$li("Score alto: alta probabilidad de aceptación y bajo riesgo de mora."),
+              shiny::tags$li("Score bajo: baja aceptación y/o alto riesgo.")
+            ),
 
-            shiny::p("Al entrenar el modelo con datos históricos (aprendizaje supervisado), ",
-                    "podemos comparar las predicciones con los resultados reales ",
-                    "y así calcular los aciertos y errores en una matriz de confusión."),
+            # 3) Regla de decisión
+            shiny::h4("Regla de decisión con el umbral \\(\\tau\\)"),
+            shiny::helpText("$$
+              \\text{Si } \\text{score} \\ge \\tau \\Rightarrow \\; \\text{Aprobado}
+              \\qquad\\qquad
+              \\text{Si } \\text{score} < \\tau \\Rightarrow \\; \\text{Rechazado}
+            $$"),
 
-            shiny::p("De la matriz de confusión obtenemos varias métricas:"),
-            shiny::p("• Accuracy: proporción de aciertos totales ",
-                    "\\[ Accuracy = \\frac{TP + TN}{TP+TN+FP+FN} \\]"),
-            shiny::p("• Sensibilidad (Recall): capacidad de detectar positivos ",
-                    "\\[ Sensibilidad = \\frac{TP}{TP+FN} \\]"),
-            shiny::p("• Especificidad: capacidad de detectar negativos ",
-                    "\\[ Especificidad = \\frac{TN}{TN+FP} \\]"),
-            shiny::p("• Precisión (Precision): de los aprobados, cuántos eran realmente buenos ",
-                    "\\[ Precision = \\frac{TP}{TP+FP} \\]"),
-            shiny::p("• F1 Score: equilibrio entre precisión y sensibilidad ",
-                    "\\[ F1 = 2 \\cdot \\frac{Precision \\cdot Sensibilidad}{Precision + Sensibilidad} \\]"),
+            # 4) Matriz de confusión
+            shiny::h4("Cómo evaluamos la calidad de la decisión"),
+            shiny::p("Comparamos las decisiones contra el resultado real con la ", shiny::strong("matriz de confusión"), ":"),
+            shiny::tags$ul(
+              shiny::tags$li(shiny::strong("TP (verdadero positivo): "), "aprobado y realmente bueno."),
+              shiny::tags$li(shiny::strong("FP (falso positivo): "), "aprobado pero era malo (riesgo que entró)."),
+              shiny::tags$li(shiny::strong("TN (verdadero negativo): "), "rechazado y realmente malo (riesgo que evitamos)."),
+              shiny::tags$li(shiny::strong("FN (falso negativo): "), "rechazado pero era bueno (venta perdida).")
+            ),
 
-            shiny::p("El gráfico te muestra cómo varían estas métricas cuando cambias ",
-                    "el valor del umbral \\(\\tau\\). Al bajar \\(\\tau\\), apruebas más clientes ",
-                    "(mayor sensibilidad, menor especificidad). Al subirlo, apruebas menos ",
-                    "clientes (mayor especificidad, menor sensibilidad)."),
+            # 5) Métricas con significado de negocio
+            shiny::h4("Métricas clave y su interpretación de negocio"),
 
-            shiny::h4("Selección de umbral sobre el score integrado"),
-            shiny::p("El score integrado favorece alta aceptación y bajo riesgo: \\(\\text{score} = p(\\text{aceptar})\\times (1 - p(\\text{mora}))\\). Ajusta el umbral y compara métricas."),
+            shiny::h5("Accuracy (Exactitud)"),
+            shiny::p("Proporción total de aciertos. Útil como visión global, pero puede ser engañosa con clases desbalanceadas."),
+            shiny::helpText("$$Accuracy = \\frac{TP + TN}{TP + TN + FP + FN}$$"),
+
+            shiny::h5("Sensibilidad (Recall o TPR)"),
+            shiny::p("De todos los clientes realmente buenos, ¿qué proporción aprobamos? Si es baja, perdemos ventas."),
+            shiny::helpText("$$Sensibilidad = \\frac{TP}{TP + FN}$$"),
+
+            shiny::h5("Especificidad (TNR)"),
+            shiny::p("De todos los clientes realmente malos, ¿qué proporción rechazamos? Si es baja, se cuela más riesgo."),
+            shiny::helpText("$$Especificidad = \\frac{TN}{TN + FP}$$"),
+
+            shiny::h5("Precisión (Precision o VPP)"),
+            shiny::p("De los clientes aprobados, ¿qué proporción resultó realmente buena? Mide la calidad de las aprobaciones."),
+            shiny::helpText("$$Precisi\\acute{o}n = \\frac{TP}{TP + FP}$$"),
+
+            shiny::h5("F1 Score"),
+            shiny::p("Equilibrio entre Precisión y Sensibilidad. Útil para encontrar un punto medio entre colocar y controlar riesgo."),
+            shiny::helpText("$$F1 = 2 \\cdot \\frac{Precisi\\acute{o}n \\cdot Sensibilidad}{Precisi\\acute{o}n + Sensibilidad}$$"),
+
+            # 6) Efecto de mover el umbral
+            shiny::h4("¿Qué pasa cuando muevo el umbral \\(\\tau\\)?"),
+            shiny::tags$ul(
+              shiny::tags$li(shiny::strong("Bajar \\(\\tau\\): "), "apruebas más clientes → sube la Sensibilidad; 
+                              pero suelen bajar la Especificidad y la Precisión (entra más riesgo)."),
+              shiny::tags$li(shiny::strong("Subir \\(\\tau\\): "), "apruebas menos → suben Especificidad y Precisión; 
+                              pero baja la Sensibilidad (pierdes buenos clientes)."),
+              shiny::tags$li(shiny::strong("Objetivo práctico: "), "elige \\(\\tau\\) según la estrategia (maximizar colocaciones, 
+                              minimizar riesgo o un balance; por ejemplo, maximizando F1 o fijando una meta mínima de Precisión).")
+            ),
+
             shiny::br(),
-            shiny::actionButton(ns("eval_thresholds"), "Evaluar Umbrales (score integrado)"),
+
             shiny::sliderInput(ns("thr"), "Umbral de decisión", min = 0, max = 1, value = 0.5, step = 0.01),
-            shiny::actionButton(ns("apply_thr"), "Aplicar umbral"),
+            shiny::actionButton(ns("apply_thr"), "Evaluar y aplicar umbral"),
+
             shiny::br(), shiny::br(),
             shiny::plotOutput(ns("plot_metrics"), height = 260),
             DT::DTOutput(ns("tbl_thr_metrics"))
@@ -284,7 +314,15 @@ mod_m2_ui <- function(id){
           shiny::tabPanel(
             title = "Resultados",
             shiny::br(),
+            shiny::h4("Interpretación de los resultados"),
+            shiny::p(
+              "El histograma resume la distribución del score integrado y la línea marca el umbral actual. ",
+              "El diagrama de torta a continuación muestra la proporción de clientes aprobados (score ≥ umbral) ",
+              "y rechazados (score < umbral). Esto refleja un paso del \"funnel\" comercial del banco, ",
+              "en el que cada clasificación ayuda a segmentar a los clientes para la oferta de créditos."
+            ),
             shiny::plotOutput(ns("plot_scores"), height = 240),
+            shiny::plotOutput(ns("plot_pie"), height = 240),
             DT::DTOutput(ns("tbl_scores")),
             shiny::br(),
             shiny::actionButton(ns("confirmar"), "Confirmar y Guardar"),
