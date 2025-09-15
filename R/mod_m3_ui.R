@@ -30,7 +30,6 @@ mod_m3_ui <- function(id){
         shiny::numericInput(ns("monto_sim"), "Monto (S/)", value = 10000, min = 1000, step = 500),
         shiny::numericInput(ns("plazo_sim"), "Plazo (meses)", value = 12, min = 3, step = 1),
         shiny::numericInput(ns("score_sim"), "Score simulado (0-1)", value = 0.5, min = 0, max = 1, step = 0.01),
-        shiny::selectInput(ns("cluster_sim"), "Cluster simulado", choices = NULL, selected = NULL)
       ),
       # Panel derecho: Tabs
       shiny::column(
