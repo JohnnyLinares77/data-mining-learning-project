@@ -5,6 +5,12 @@
 mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, cluster_levels = NULL){
   ns <- session$ns
 
+  # Almacenes reactivos para métricas y resultados de simulación
+  rv <- shiny::reactiveValues(
+    metrics = NULL,
+    sim_results = NULL
+  )
+
   # ----------------------------
   # Helpers (compatibles con M2)
   # ----------------------------
@@ -157,26 +163,40 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
     rmse <- function(obs, pred) sqrt(mean((obs - pred)^2))
 
     # Si hay manual, reentrena con misma fórmula sobre train
-    metrics <- data.frame(Modelo = character(), RMSE = numeric(), R2_adj = numeric(), stringsAsFactors = FALSE)
+    metrics_df <- data.frame(Modelo = character(), RMSE = numeric(), R2_adj = numeric(), stringsAsFactors = FALSE)
+    metrics_list <- list()
     if (!is.null(modelo_manual())) {
       manual_fit_tr <- stats::lm(stats::formula(modelo_manual()), data = tr)
       pred_man <- predict(manual_fit_tr, newdata = te)
-      metrics <- rbind(metrics, data.frame(
+      rmse_man <- rmse(te$ME, pred_man)
+      r2_man   <- summary(manual_fit_tr)$adj.r.squared
+      metrics_df <- rbind(metrics_df, data.frame(
         Modelo = "Manual",
-        RMSE = rmse(te$ME, pred_man),
-        R2_adj = summary(manual_fit_tr)$adj.r.squared
+        RMSE = rmse_man,
+        R2_adj = r2_man
       ))
+      # guardar detalles manual
+      metrics_list$manual <- list(rmse = rmse_man, r2_adj = r2_man,
+                                  alpha = input$alpha, vars = input$vars_numeric)
     }
     auto_fit_tr <- stats::lm(stats::formula(auto_fit), data = tr)
     pred_auto   <- predict(auto_fit_tr, newdata = te)
-    metrics <- rbind(metrics, data.frame(
+    rmse_auto <- rmse(te$ME, pred_auto)
+    r2_auto   <- summary(auto_fit_tr)$adj.r.squared
+    metrics_df <- rbind(metrics_df, data.frame(
       Modelo = "Automático",
-      RMSE = rmse(te$ME, pred_auto),
-      R2_adj = summary(auto_fit_tr)$adj.r.squared
+      RMSE = rmse_auto,
+      R2_adj = r2_auto
     ))
+    # variables del modelo automático (terminos)
+    auto_vars <- attr(terms(auto_fit), "term.labels")
+    metrics_list$auto <- list(rmse = rmse_auto, r2_adj = r2_auto,
+                              alpha = input$alpha, vars = auto_vars)
+
+    rv$metrics <- metrics_list
 
     output$comp_table <- DT::renderDT({
-      DT::datatable(metrics, options = list(dom = "t", paging = FALSE)) |>
+      DT::datatable(metrics_df, options = list(dom = "t", paging = FALSE)) |>
         DT::formatRound(c("RMSE","R2_adj"), 4)
     })
   }, ignoreInit = TRUE)
@@ -234,6 +254,18 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
 
     df_plot <- data.frame(rate = r_seq, ME = me_hat, Elasticidad = elasticidad)
 
+    # guardar resultados de simulación en rv
+    rv$sim_results <- list(
+      modelo = input$modelo_final,
+      monto  = monto,
+      plazo  = plazo,
+      score  = score,
+      cluster = cluster_val,
+      rate = df_plot$rate,
+      ME   = df_plot$ME,
+      Elasticidad = df_plot$Elasticidad
+    )
+
     output$margen_plot <- shiny::renderPlot({
       plot(df_plot$rate, df_plot$ME, type = "l", lwd = 2,
            xlab = "Tasa de interés", ylab = "Margen esperado",
@@ -253,5 +285,49 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
              legend = c("E = -1 (punto elástico)","E = 0"),
              lty = c(2,3), col = c("blue","gray40"))
     })
+  }, ignoreInit = TRUE)
+
+  # ----------------------------
+  # Persistencia de resultados M3
+  # ----------------------------
+  observeEvent(input$confirmar, {
+    shiny::req(modelo_manual() %||% modelo_auto())   # o tu objeto final
+    shiny::req(rv$sim_results, rv$metrics)           # o los nombres que uses
+
+    ok1 <- ok2 <- TRUE
+    err <- NULL
+
+    # Ejemplo: guardar métricas de modelo final
+    tryCatch({
+      persist_eval_m3(
+        id_sim = id_sim,
+        modelo = input$modelo_final,
+        rmse   = rv$metrics$RMSE,
+        r2_adj = rv$metrics$R2_adj,
+        alpha  = input$alpha,
+        vars   = rv$vars_seleccionadas   # ajusta al objeto que uses
+      )
+    }, error = function(e) { ok1 <<- FALSE; err <<- conditionMessage(e) })
+
+    # Ejemplo: guardar curva de simulación
+    tryCatch({
+      persist_simulacion_m3(
+        id_sim = id_sim,
+        modelo = input$modelo_final,
+        monto  = input$monto_sim,
+        plazo  = input$plazo_sim,
+        score  = input$score_sim,
+        cluster = input$cluster_sim,
+        rate_vec = rv$sim_results$rate,
+        me_vec   = rv$sim_results$ME,
+        elasticidad_vec = rv$sim_results$Elasticidad
+      )
+    }, error = function(e) { ok2 <<- FALSE; err <<- conditionMessage(e) })
+
+    if (isTRUE(ok1 && ok2)) {
+      shiny::showNotification("Resultados M3 guardados en data/*.csv", type = "message")
+    } else {
+      shiny::showNotification(paste("No se pudo guardar (M3):", err), type = "error")
+    }
   }, ignoreInit = TRUE)
 }

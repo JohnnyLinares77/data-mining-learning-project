@@ -26,6 +26,7 @@ source("R/mod_m2_server.R")
 
 # ---- Sourcing: Módulo 3 (Pricing y Elasticidad)
 # Asegúrate de colocar estos archivos en R/ tal como hiciste con M1 y M2
+source("R/persistencia_m3.R")
 source("R/mod_m3_ui.R")
 source("R/mod_m3_server.R")
 
