@@ -1,207 +1,223 @@
 # R/mod_m3_server.R
 # Server del Módulo 3 – Pricing y Elasticidad
 #
-# Esta función implementa la lógica reactiva del módulo de pricing. Recibe un
-# objeto reactivo `base_data` que devuelve un data.frame con las variables
-# necesarias: las probabilidades de aceptación y de mora (p_accept y p_mora),
-# así como las palancas de pricing (rate, amount, term) y cualquier otra
-# variable numérica o categórica relevante. La función calcula el margen
-# esperado (ME), permite explorar correlaciones, ajustar modelos lineales
-# manuales y automáticos, y simular márgenes y elasticidades.
+# Compatible con callModule():
+#   callModule(mod_m3_server, "m3", datos_reactivos = ..., id_sim = ...)
 #
-mod_m3_server <- function(input, output, session, base_data, cluster_levels = NULL){
+# Requisitos de datos en datos_reactivos():
+#   - Columnas: p_accept, p_mora, rate, amount, term
+#   - (Opcional) score, cluster y demás features numéricas/categóricas
+#
+mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, cluster_levels = NULL){
   ns <- session$ns
-
-  # 1. Reactive: calcula el margen esperado y añade columna ME al data.frame
-  datos_con_margen <- shiny::reactive({
-    shiny::req(base_data())
-    df <- base_data()
-    # Verificar que existan las columnas requeridas
-    required_cols <- c("p_accept", "p_mora", "rate", "amount", "term")
-    missing_cols <- setdiff(required_cols, names(df))
-    if (length(missing_cols) > 0) {
-      stop(paste("Las siguientes columnas faltan en base_data:", paste(missing_cols, collapse = ", ")))
+  
+  # ---------- Helpers ----------
+  .calc_me <- function(df){
+    # ME = (rate * amount * (term/12)) * p_accept * (1 - p_mora)
+    if (!all(c("p_accept","p_mora","rate","amount","term") %in% names(df))) {
+      return(rep(NA_real_, nrow(df)))
     }
-    # Ingreso bruto: tasa * monto * plazo/12
-    ingreso_bruto <- df$rate * df$amount * (df$term / 12)
-    # Margen esperado: ingreso bruto * p_accept * (1 - p_mora)
-    df$ME <- ingreso_bruto * df$p_accept * (1 - df$p_mora)
+    (df$rate * df$amount * (df$term/12)) * df$p_accept * (1 - df$p_mora)
+  }
+  
+  # ---------- Base con ME ----------
+  datos_con_margen <- shiny::reactive({
+    shiny::req(datos_reactivos())
+    df <- datos_reactivos()
+    req_cols <- c("p_accept","p_mora","rate","amount","term")
+    miss <- setdiff(req_cols, names(df))
+    if (length(miss) > 0) {
+      stop(sprintf("Faltan columnas en datos_reactivos(): %s", paste(miss, collapse=", ")))
+    }
+    df$ME <- .calc_me(df)
     df
   })
-
-  # 1A. Actualizar dinámicamente selectores en UI
+  
+  # ---------- UI dinámica: selección de variables ----------
   shiny::observeEvent(datos_con_margen(), {
     df <- datos_con_margen()
-    # Variables numéricas excluyendo la respuesta
-    num_vars <- names(df)[sapply(df, is.numeric)]
+    num_vars <- names(df)[vapply(df, is.numeric, logical(1))]
     num_vars <- setdiff(num_vars, "ME")
-    # Update de selectizeInput para correlaciones
+    
     output$var_select_ui <- shiny::renderUI({
       shiny::selectizeInput(ns("vars_corr"), "Variables numéricas:",
-                            choices = num_vars, selected = num_vars, multiple = TRUE)
+                            choices = num_vars, selected = num_vars, multiple = TRUE,
+                            options = list(plugins = list("remove_button")))
     })
-    # Update de checkboxGroupInput para modelo lineal manual
     output$model_var_select <- shiny::renderUI({
       shiny::checkboxGroupInput(ns("vars_model"), "Variables explicativas:",
                                 choices = num_vars, selected = num_vars)
     })
-    # Actualizar opciones de cluster para simulación
+    
+    # Poblado de clusters para simulación
     clusters <- cluster_levels
     if (is.null(clusters)) {
-      if ("cluster" %in% names(df)) {
-        clusters <- unique(as.character(df$cluster))
-      } else {
-        clusters <- NULL
-      }
+      if ("cluster" %in% names(df)) clusters <- sort(unique(as.character(df$cluster)))
     }
     shiny::updateSelectInput(session, "cluster_sim", choices = clusters)
   }, ignoreInit = TRUE)
-
-  # 1B. Calcular la matriz de correlaciones
+  
+  # ---------- Correlaciones ----------
   shiny::observeEvent(input$calcular_cor, {
     shiny::req(input$vars_corr)
-    df <- datos_con_margen()[, c(input$vars_corr, "ME"), drop = FALSE]
-    cor_mat <- stats::cor(df, use = "pairwise.complete.obs")
+    df <- datos_con_margen()
+    cols <- unique(c(input$vars_corr, "ME"))
+    dfc  <- stats::na.omit(df[, cols, drop = FALSE])
+    if (nrow(dfc) < 3) {
+      output$cor_plot  <- shiny::renderPlot({ plot.new(); title("Datos insuficientes para correlación") })
+      output$cor_table <- DT::renderDT({
+        data.frame(mensaje = "Datos insuficientes para correlación")
+      }, options = list(dom = "t", paging = FALSE))
+      return(invisible())
+    }
+    cm <- stats::cor(dfc, use = "pairwise.complete.obs")
+    
     output$cor_plot <- shiny::renderPlot({
       if (requireNamespace("corrplot", quietly = TRUE)) {
-        corrplot::corrplot(cor_mat, method = "color", tl.cex = 0.8)
+        corrplot::corrplot(cm, method = "color", tl.cex = 0.8)
       } else {
-        # Fallback simple heatmap si corrplot no está disponible
-        image(1:ncol(cor_mat), 1:nrow(cor_mat), t(cor_mat)[, ncol(cor_mat):1],
-              xlab = "", ylab = "", axes = FALSE)
-        axis(1, at = 1:ncol(cor_mat), labels = colnames(cor_mat), las = 2, cex.axis = 0.7)
-        axis(2, at = 1:nrow(cor_mat), labels = rev(rownames(cor_mat)), las = 2, cex.axis = 0.7)
+        graphics::image(1:ncol(cm), 1:nrow(cm), t(cm[nrow(cm):1,]), axes = FALSE,
+                        main = "Mapa de correlaciones", xlab = "", ylab = "")
+        axis(3, at = 1:ncol(cm), labels = colnames(cm), las = 2, cex.axis = .8)
+        axis(2, at = nrow(cm):1, labels = rownames(cm), las = 2, cex.axis = .8)
       }
     })
-    output$cor_table <- shiny::renderDataTable({
-      round(cor_mat, 3)
-    }, options = list(pageLength = 5))
+    output$cor_table <- DT::renderDT({
+      round(cm, 3)
+    }, options = list(pageLength = 6))
   })
-
-  # 2. Ajustar modelo manual
+  
+  # ---------- Modelo manual ----------
   modelo_manual <- shiny::reactiveVal(NULL)
   shiny::observeEvent(input$ajustar_modelo, {
     shiny::req(input$vars_model)
     df <- datos_con_margen()
     vars <- input$vars_model
-    formula_str <- paste("ME ~", paste(vars, collapse = "+"))
-    fit <- stats::lm(stats::as.formula(formula_str), data = df)
+    if (!length(vars)) return(NULL)
+    form <- stats::as.formula(paste("ME ~", paste(vars, collapse = " + ")))
+    fit  <- stats::lm(form, data = df)
     modelo_manual(fit)
-    output$model_summary <- shiny::renderPrint({
-      summary(fit)
-    })
+    
+    output$model_summary <- shiny::renderPrint({ summary(fit) })
     output$resid_plot <- shiny::renderPlot({
-      par(mfrow = c(1, 2))
-      plot(fit, which = 1)
-      plot(fit, which = 2)
+      op <- par(mfrow = c(1, 2)); on.exit(par(op), add = TRUE)
+      plot(fit, which = 1)  # residuales vs ajustados
+      plot(fit, which = 2)  # QQ-plot
     })
   })
-
-  # 3. Ajustar modelo automático (stepwise AIC)
+  
+  # ---------- Modelo automático (Stepwise AIC) ----------
   modelo_auto <- shiny::reactiveVal(NULL)
   shiny::observeEvent(input$ajustar_auto, {
     df <- datos_con_margen()
-    num_vars <- names(df)[sapply(df, is.numeric)]
+    num_vars <- names(df)[vapply(df, is.numeric, logical(1))]
     num_vars <- setdiff(num_vars, "ME")
-    full_form <- stats::as.formula(paste("ME ~", paste(num_vars, collapse = "+")))
-    full_fit <- stats::lm(full_form, data = df)
+    if (!length(num_vars)) return(NULL)
+    
+    full_form <- stats::as.formula(paste("ME ~", paste(num_vars, collapse = " + ")))
+    full_fit  <- stats::lm(full_form, data = df)
+    if (!requireNamespace("MASS", quietly = TRUE)) {
+      stop("El paquete MASS es requerido para stepAIC(). Instálalo o cárgalo en la app.")
+    }
     auto_fit <- MASS::stepAIC(full_fit, direction = "both", trace = FALSE)
     modelo_auto(auto_fit)
-    output$auto_summary <- shiny::renderPrint({
-      summary(auto_fit)
-    })
-    # Comparación de desempeño con hold-out 30%
+    
+    output$auto_summary <- shiny::renderPrint({ summary(auto_fit) })
+    
+    # Comparación en hold-out 30%
     set.seed(123)
-    n <- nrow(df)
-    idx <- sample(seq_len(n), size = floor(0.3 * n))
-    df_train <- df[-idx, ]
-    df_test <- df[idx, ]
-    # Ajustar modelos en train
+    n   <- nrow(df)
+    idx <- if (n > 10) sample(seq_len(n), size = floor(0.3*n)) else seq_len(n)
+    df_tr <- df[-idx, , drop = FALSE]
+    df_te <- df[ idx, , drop = FALSE]
+    
+    fit_man <- NULL
     if (!is.null(modelo_manual())) {
-      manual_fit <- stats::lm(formula(modelo_manual()), data = df_train)
-    } else {
-      manual_fit <- NULL
+      fit_man <- stats::lm(formula(modelo_manual()), data = df_tr)
     }
-    auto_fit_train <- stats::lm(formula(auto_fit), data = df_train)
-    # Función RMSE
-    rmse <- function(obs, pred) sqrt(mean((obs - pred)^2))
-    metrics <- data.frame(Modelo = character(), RMSE = numeric(), R2_adj = numeric())
-    if (!is.null(manual_fit)) {
-      pred_man <- predict(manual_fit, newdata = df_test)
-      r2_man <- summary(manual_fit)$adj.r.squared
-      metrics <- rbind(metrics, data.frame(Modelo = "Manual", RMSE = rmse(df_test$ME, pred_man), R2_adj = r2_man))
+    fit_aut <- stats::lm(formula(auto_fit), data = df_tr)
+    
+    rmse <- function(obs, pred) sqrt(mean((obs - pred)^2, na.rm = TRUE))
+    res <- data.frame(Modelo = character(), RMSE = numeric(), R2_adj = numeric())
+    if (!is.null(fit_man)) {
+      prA <- predict(fit_man, newdata = df_te)
+      res <- rbind(res, data.frame(Modelo = "Manual", RMSE = rmse(df_te$ME, prA),
+                                   R2_adj = summary(fit_man)$adj.r.squared))
     }
-    pred_auto <- predict(auto_fit_train, newdata = df_test)
-    r2_auto <- summary(auto_fit_train)$adj.r.squared
-    metrics <- rbind(metrics, data.frame(Modelo = "Automático", RMSE = rmse(df_test$ME, pred_auto), R2_adj = r2_auto))
-    output$comp_table <- shiny::renderDataTable({
-      metrics
-    }, options = list(dom = "t", paging = FALSE))
+    prB <- predict(fit_aut, newdata = df_te)
+    res <- rbind(res, data.frame(Modelo = "Automático", RMSE = rmse(df_te$ME, prB),
+                                 R2_adj = summary(fit_aut)$adj.r.squared))
+    output$comp_table <- DT::renderDT({
+      res
+    }, options = list(dom = "t", paging = FALSE), rownames = FALSE)
   })
-
-  # 4. Simulación de márgenes y elasticidad
+  
+  # ---------- Simulación y Elasticidad ----------
   shiny::observeEvent(input$simular, {
-    # Seleccionar el modelo según input$modelo_final
-    selected_model <- switch(input$modelo_final,
-                             manual = modelo_manual(),
-                             automatico = modelo_auto())
-    shiny::req(!is.null(selected_model))
-    # Crear secuencia de tasas
-    rango <- input$rango_tasa
-    r_seq <- seq(from = rango[1], to = rango[2], length.out = 50)
-    # Valores para monto, plazo, score y cluster
+    # Elegir el modelo seleccionado
+    mod <- switch(input$modelo_final,
+                  manual = modelo_manual(),
+                  automatico = modelo_auto())
+    shiny::req(!is.null(mod))
+    
+    # Grid de tasa
+    rr    <- seq(input$rango_tasa[1], input$rango_tasa[2], length.out = 50)
     monto <- input$monto_sim
     plazo <- input$plazo_sim
     score <- input$score_sim
-    cluster_val <- input$cluster_sim
-    # Plantilla con primer registro
-    df_template <- datos_con_margen()[1, ]
-    df_sim <- do.call(rbind, lapply(r_seq, function(r) {
-      tmp <- df_template
-      tmp$rate <- r
+    clus  <- input$cluster_sim
+    
+    df0 <- datos_con_margen()
+    shiny::req(nrow(df0) >= 1)
+    base_row <- df0[1, , drop = FALSE]
+    
+    sims <- lapply(rr, function(r){
+      tmp <- base_row
+      tmp$rate   <- r
       tmp$amount <- monto
-      tmp$term <- plazo
-      tmp$score <- score
-      if (!is.null(tmp$cluster)) tmp$cluster <- cluster_val
-      # Recalcular ME para coherencia (no se usa en predicción)
-      ingreso_bruto_tmp <- tmp$rate * tmp$amount * (tmp$term / 12)
-      tmp$ME <- ingreso_bruto_tmp * tmp$p_accept * (1 - tmp$p_mora)
+      tmp$term   <- plazo
+      if ("score" %in% names(tmp))   tmp$score   <- score
+      if ("cluster" %in% names(tmp)) tmp$cluster <- clus
+      tmp$ME <- .calc_me(tmp)
       tmp
-    }))
-    # Predicción del margen con el modelo seleccionado
-    me_hat <- predict(selected_model, newdata = df_sim)
-    # Calcular derivada dME/dr
-    coefs <- stats::coef(selected_model)
-    dME_dr <- numeric(length(r_seq))
-    for (i in seq_along(r_seq)) {
-      r <- r_seq[i]
-      d <- 0
-      if ("rate" %in% names(coefs)) d <- d + coefs["rate"]
-      if ("I(rate^2)" %in% names(coefs)) d <- d + 2 * coefs["I(rate^2)"] * r
-      if ("rate:score" %in% names(coefs)) d <- d + coefs["rate:score"] * score
-      dME_dr[i] <- d
-    }
-    # Elasticidad: E = (dME/dr) * (rate / ME)
-    elasticidad <- dME_dr * (r_seq / me_hat)
-    df_plot <- data.frame(rate = r_seq, ME = me_hat, Elasticidad = elasticidad)
-    # Gráfico de margen esperado
-    output$margen_plot <- shiny::renderPlot({
-      plot(df_plot$rate, df_plot$ME, type = "l", lwd = 2,
-           xlab = "Tasa de interés", ylab = "Margen esperado",
-           main = "Curva de margen esperado vs tasa")
-      idx_max <- which.max(df_plot$ME)
-      points(df_plot$rate[idx_max], df_plot$ME[idx_max], pch = 19, col = "red")
-      text(df_plot$rate[idx_max], df_plot$ME[idx_max],
-           labels = sprintf("\nMax: %.3f", df_plot$rate[idx_max]), pos = 4)
     })
-    # Gráfico de elasticidad
+    df_sim <- do.call(rbind, sims)
+    
+    # Predicción del ME con el modelo seleccionado
+    me_hat <- as.numeric(predict(mod, newdata = df_sim))
+    
+    # Derivada parcial dME/dr según términos presentes
+    cf <- stats::coef(mod)
+    deriv_dr <- function(r){
+      d <- 0
+      if ("rate" %in% names(cf))         d <- d + cf["rate"]
+      if ("I(rate^2)" %in% names(cf))    d <- d + 2*cf["I(rate^2)"]*r
+      if ("rate:score" %in% names(cf) && "score" %in% names(df_sim))
+        d <- d + cf["rate:score"]*score
+      d
+    }
+    dME_dr <- vapply(rr, deriv_dr, numeric(1))
+    
+    # Elasticidad puntual: E = (dME/dr) * (rate / ME_hat)
+    E_r <- dME_dr * (rr / me_hat)
+    
+    # Graficar
+    output$margen_plot <- shiny::renderPlot({
+      plot(rr, me_hat, type = "l", lwd = 2,
+           xlab = "Tasa (rate)", ylab = "ME predicho",
+           main = "Curva de ME predicho vs tasa")
+      idx <- which.max(me_hat)
+      points(rr[idx], me_hat[idx], pch = 19, col = "red")
+      legend("topleft", legend = sprintf("Máximo en r=%.3f", rr[idx]), bty = "n")
+    })
     output$elasticidad_plot <- shiny::renderPlot({
-      plot(df_plot$rate, df_plot$Elasticidad, type = "l", lwd = 2,
-           xlab = "Tasa de interés", ylab = "Elasticidad",
-           main = "Elasticidad de la demanda vs tasa")
-      abline(h = c(-1, 0), lty = c(2, 3), col = c("blue", "darkgrey"))
-      legend("topright", legend = c("E=-1 (punto elástico)", "E=0"),
-             lty = c(2, 3), col = c("blue", "darkgrey"), bty = "n", cex = 0.8)
+      plot(rr, E_r, type = "l", lwd = 2,
+           xlab = "Tasa (rate)", ylab = "Elasticidad de ME",
+           main = "Elasticidad de ME respecto a tasa")
+      abline(h = 0, lty = 2, col = "gray50")
+      abline(h = -1, lty = 3, col = "steelblue")
+      legend("topright", legend = c("E=0","E=-1"), lty = c(2,3),
+             col = c("gray50","steelblue"), bty = "n", cex = 0.9)
     })
   })
 }
