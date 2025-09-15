@@ -1,34 +1,47 @@
 # R/mod_m3_server.R
+# ---------------------------------------------------------------
 # Server del Módulo 3 – Pricing y Elasticidad
-# Firma compatible con callModule(..., datos_reactivos=..., id_sim=...)
+# Firma: callModule(..., datos_reactivos=..., id_sim=..., cluster_levels=NULL)
+# ---------------------------------------------------------------
 
 mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, cluster_levels = NULL){
   ns <- session$ns
 
-  # Almacenes reactivos para métricas y resultados de simulación
+  # Operador "o si no" (útil para valores por defecto)
+  `%||%` <- function(a, b) if (is.null(a)) b else a
+
+  # ----------------------------
+  # Estado reactivo
+  # ----------------------------
   rv <- shiny::reactiveValues(
-    metrics = NULL,
-    sim_results = NULL
+    metrics = NULL,     # lista con $manual y/o $auto (rmse, r2_adj, alpha, vars)
+    sim_results = NULL  # lista con resultados de simulación (para persistir)
   )
 
   # ----------------------------
   # Helpers (compatibles con M2)
   # ----------------------------
   .get_base_df <- function(d){
+    # 1) Si ya es data.frame (como en app.R con datos_para_m3), úsalo directo
+    if (is.data.frame(d)) return(d)
+
+    # 2) Si viene como lista con $base, úsalo
     if (!is.null(d$base)) return(d$base)
+
+    # 3) Si viene como lista de tablas, combínalas por id_cliente
     keys <- c("demograficas","financieras","comp_historico","clientes","post_desembolso")
-    tabs <- Filter(Negate(is.null), d[keys])
+    tabs <- tryCatch(Filter(Negate(is.null), d[keys]), error = function(e) list())
     if (length(tabs) == 0) stop("No se encontraron tablas base en datos_reactivos().")
     Reduce(function(a,b) merge(a,b, by = "id_cliente", all = TRUE), tabs)
   }
 
   .ensure_probs <- function(df){
-    # Si M2 ya escribió p_accept / p_mora en la base, se usan; en caso contrario, simulamos (como en M2)
+    # Si M2 ya dejó p_accept / p_mora se usan; si no, simulamos (patrón M2)
     if (!all(c("p_accept","p_mora") %in% names(df))) {
-      s_buro <- if ("score_buro" %in% names(df)) scale(df$score_buro) else 0
-      ingreso <- if ("ingreso_verificado" %in% names(df)) scale(df$ingreso_verificado) else 0
-      moras_prev <- if ("n_moras_previas" %in% names(df)) scale(df$n_moras_previas) else 0
-      rfm <- if ("rfm" %in% names(df)) scale(df$rfm) else 0
+      s_buro    <- if ("score_buro" %in% names(df)) scale(df$score_buro) else 0
+      ingreso   <- if ("ingreso_verificado" %in% names(df)) scale(df$ingreso_verificado) else 0
+      moras_prev<- if ("n_moras_previas" %in% names(df)) scale(df$n_moras_previas) else 0
+      rfm       <- if ("rfm" %in% names(df)) scale(df$rfm) else 0
       lin_acc <-  0.6 * s_buro + 0.4 * ingreso - 0.2 * moras_prev + 0.2 * rfm
       lin_mor <- -0.7 * s_buro + 0.6 * moras_prev - 0.2 * ingreso - 0.1 * rfm
       df$p_accept <- 1/(1 + exp(-lin_acc))
@@ -38,7 +51,7 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
   }
 
   .ensure_pricing_pillars <- function(df){
-    # Si no existen rate/amount/term en la base (p.ej. solo clientes), creamos columnas plausibles
+    # Si no hay rate/amount/term, creamos columnas plausibles
     if (!("rate" %in% names(df)))   df$rate   <- runif(nrow(df), 0.03, 0.09)
     if (!("amount" %in% names(df))) df$amount <- round(runif(nrow(df), 2000, 20000), 0)
     if (!("term" %in% names(df)))   df$term   <- sample(c(6,12,18,24,36), nrow(df), TRUE)
@@ -54,18 +67,18 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
     df <- .ensure_probs(df)
     df <- .ensure_pricing_pillars(df)
 
-    # Ingreso bruto y Margen Esperado
+    # Ingreso bruto y Margen Esperado "contable"
     ingreso_bruto <- df$rate * df$amount * (df$term / 12)
     df$ME <- ingreso_bruto * df$p_accept * (1 - df$p_mora)
 
-    # exposición de clusters (para simulación)
+    # Poblar niveles de cluster para simulación
     if (is.null(cluster_levels)) {
       if ("cluster_id" %in% names(df)) {
         shiny::updateSelectInput(session, "cluster_sim",
-          choices = sort(unique(as.character(df$cluster_id))))
+                                 choices = sort(unique(as.character(df$cluster_id))))
       } else if ("cluster" %in% names(df)) {
         shiny::updateSelectInput(session, "cluster_sim",
-          choices = sort(unique(as.character(df$cluster))))
+                                 choices = sort(unique(as.character(df$cluster))))
       } else {
         shiny::updateSelectInput(session, "cluster_sim", choices = NULL)
       }
@@ -76,8 +89,9 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
     # Poblar lista de numéricas (excluye id y respuesta)
     num_vars <- names(df)[vapply(df, is.numeric, TRUE)]
     num_vars <- setdiff(num_vars, c("ME","id_cliente"))
-    shiny::updateCheckboxGroupInput(session, "vars_numeric",
-      choices = num_vars,
+    shiny::updateCheckboxGroupInput(
+      session, "vars_numeric",
+      choices  = num_vars,
       selected = intersect(num_vars, c("rate","amount","term","score_buro","rfm","ingreso_verificado"))
     )
 
@@ -88,15 +102,16 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
   # Exploración: matriz de correlaciones
   # ----------------------------
   observeEvent(input$calcular_cor, {
-    df <- base_df()
+    df   <- base_df()
     vars <- input$vars_numeric
     shiny::validate(shiny::need(length(vars) >= 1, "Selecciona al menos una variable numérica."))
 
-    df_cor <- df[, unique(c(vars, "ME")), drop = FALSE]
-    # filtra columnas numéricas por seguridad
-    keep <- vapply(df_cor, is.numeric, TRUE)
+    # Selección segura de columnas
+    cols   <- intersect(unique(c(vars, "ME")), names(df))
+    df_cor <- df[, cols, drop = FALSE]
+    keep   <- vapply(df_cor, is.numeric, TRUE)
     df_cor <- df_cor[, keep, drop = FALSE]
-    shiny::validate(shiny::need(ncol(df_cor) >= 2, "Datos insuficientes para correlación"))
+    shiny::validate(shiny::need(ncol(df_cor) >= 2, "Datos insuficientes para correlación."))
 
     cor_mat <- stats::cor(df_cor, use = "pairwise.complete.obs")
 
@@ -126,8 +141,8 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
     vars <- input$vars_numeric
     shiny::validate(shiny::need(length(vars) >= 1, "Selecciona variables para el modelo."))
 
-    formula_str <- paste("ME ~", paste(vars, collapse = " + "))
-    fit <- stats::lm(stats::as.formula(formula_str), data = df)
+    form_str <- paste("ME ~", paste(vars, collapse = " + "))
+    fit      <- stats::lm(stats::as.formula(form_str), data = df)
     modelo_manual(fit)
 
     output$model_summary <- shiny::renderPrint({ summary(fit) })
@@ -162,36 +177,28 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
 
     rmse <- function(obs, pred) sqrt(mean((obs - pred)^2))
 
-    # Si hay manual, reentrena con misma fórmula sobre train
-    metrics_df <- data.frame(Modelo = character(), RMSE = numeric(), R2_adj = numeric(), stringsAsFactors = FALSE)
+    # Métricas a mostrar y a persistir
+    metrics_df   <- data.frame(Modelo = character(), RMSE = numeric(), R2_adj = numeric(), stringsAsFactors = FALSE)
     metrics_list <- list()
+
+    # Si existe modelo manual, reentrenarlo en train y evaluar en test
     if (!is.null(modelo_manual())) {
       manual_fit_tr <- stats::lm(stats::formula(modelo_manual()), data = tr)
       pred_man <- predict(manual_fit_tr, newdata = te)
       rmse_man <- rmse(te$ME, pred_man)
       r2_man   <- summary(manual_fit_tr)$adj.r.squared
-      metrics_df <- rbind(metrics_df, data.frame(
-        Modelo = "Manual",
-        RMSE = rmse_man,
-        R2_adj = r2_man
-      ))
-      # guardar detalles manual
-      metrics_list$manual <- list(rmse = rmse_man, r2_adj = r2_man,
-                                  alpha = input$alpha, vars = input$vars_numeric)
+      metrics_df <- rbind(metrics_df, data.frame(Modelo = "Manual", RMSE = rmse_man, R2_adj = r2_man))
+      metrics_list$manual <- list(rmse = rmse_man, r2_adj = r2_man, alpha = input$alpha, vars = input$vars_numeric %||% character(0))
     }
+
+    # Modelo automático entrenado en train, evaluado en test
     auto_fit_tr <- stats::lm(stats::formula(auto_fit), data = tr)
     pred_auto   <- predict(auto_fit_tr, newdata = te)
     rmse_auto <- rmse(te$ME, pred_auto)
     r2_auto   <- summary(auto_fit_tr)$adj.r.squared
-    metrics_df <- rbind(metrics_df, data.frame(
-      Modelo = "Automático",
-      RMSE = rmse_auto,
-      R2_adj = r2_auto
-    ))
-    # variables del modelo automático (terminos)
+    metrics_df <- rbind(metrics_df, data.frame(Modelo = "Automático", RMSE = rmse_auto, R2_adj = r2_auto))
     auto_vars <- attr(terms(auto_fit), "term.labels")
-    metrics_list$auto <- list(rmse = rmse_auto, r2_adj = r2_auto,
-                              alpha = input$alpha, vars = auto_vars)
+    metrics_list$auto <- list(rmse = rmse_auto, r2_adj = r2_auto, alpha = input$alpha, vars = auto_vars %||% character(0))
 
     rv$metrics <- metrics_list
 
@@ -230,7 +237,7 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
       if ("score" %in% names(tmp))      tmp$score      <- score
       if ("cluster_id" %in% names(tmp)) tmp$cluster_id <- cluster_val
       if ("cluster" %in% names(tmp))    tmp$cluster    <- cluster_val
-      # recalculamos ME “contable” para mostrar, pero la predicción vendrá del modelo
+      # ME "contable" para referencia visual (la predicción vendrá del modelo)
       ingreso_bruto <- tmp$rate * tmp$amount * (tmp$term/12)
       tmp$ME <- ingreso_bruto * tmp$p_accept * (1 - tmp$p_mora)
       tmp
@@ -238,23 +245,23 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
 
     me_hat <- as.numeric(predict(m_final, newdata = df_sim))
 
-    # derivada parcial de ME_hat respecto a rate (si hay términos relevantes)
+    # derivada parcial de ME_hat respecto a rate (si existen términos relevantes)
     coefs <- stats::coef(m_final)
     dME_dr <- numeric(length(r_seq))
     for (i in seq_along(r_seq)) {
       r <- r_seq[i]; d <- 0
-      if ("rate" %in% names(coefs))        d <- d + coefs["rate"]
-      if ("I(rate^2)" %in% names(coefs))   d <- d + 2*coefs["I(rate^2)"]*r
-      if ("rate:score" %in% names(coefs))  d <- d + coefs["rate:score"]*score
-      if ("rate:score_buro" %in% names(coefs)) d <- d + coefs["rate:score_buro"]*score
+      if ("rate" %in% names(coefs))             d <- d + coefs["rate"]
+      if ("I(rate^2)" %in% names(coefs))        d <- d + 2*coefs["I(rate^2)"]*r
+      if ("rate:score" %in% names(coefs))       d <- d + coefs["rate:score"]*score
+      if ("rate:score_buro" %in% names(coefs))  d <- d + coefs["rate:score_buro"]*score
       dME_dr[i] <- d
     }
 
-    elasticidad <- dME_dr * (r_seq / me_hat)
+    elasticidad <- dME_dr * (r_seq / pmax(me_hat, .Machine$double.eps))
 
     df_plot <- data.frame(rate = r_seq, ME = me_hat, Elasticidad = elasticidad)
 
-    # guardar resultados de simulación en rv
+    # guardar resultados de simulación para persistir
     rv$sim_results <- list(
       modelo = input$modelo_final,
       monto  = monto,
@@ -288,28 +295,34 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
   }, ignoreInit = TRUE)
 
   # ----------------------------
-  # Persistencia de resultados M3
+  # Persistencia de resultados M3 (sin cerrar la app)
   # ----------------------------
   observeEvent(input$confirmar, {
-    shiny::req(modelo_manual() %||% modelo_auto())   # o tu objeto final
-    shiny::req(rv$sim_results, rv$metrics)           # o los nombres que uses
+    shiny::req(modelo_manual() %||% modelo_auto())
+    shiny::req(rv$sim_results, rv$metrics)
+
+    # Elegir bloque de métricas según modelo final
+    met <- switch(input$modelo_final,
+                  manual     = rv$metrics$manual,
+                  automatico = rv$metrics$auto,
+                  NULL)
 
     ok1 <- ok2 <- TRUE
     err <- NULL
 
-    # Ejemplo: guardar métricas de modelo final
+    # Guardar métricas de modelo final
     tryCatch({
       persist_eval_m3(
         id_sim = id_sim,
         modelo = input$modelo_final,
-        rmse   = rv$metrics$RMSE,
-        r2_adj = rv$metrics$R2_adj,
-        alpha  = input$alpha,
-        vars   = rv$vars_seleccionadas   # ajusta al objeto que uses
+        rmse   = met$rmse %||% NA_real_,
+        r2_adj = met$r2_adj %||% NA_real_,
+        alpha  = met$alpha %||% input$alpha %||% NA_real_,
+        vars   = met$vars %||% character(0)
       )
     }, error = function(e) { ok1 <<- FALSE; err <<- conditionMessage(e) })
 
-    # Ejemplo: guardar curva de simulación
+    # Guardar curva de simulación
     tryCatch({
       persist_simulacion_m3(
         id_sim = id_sim,

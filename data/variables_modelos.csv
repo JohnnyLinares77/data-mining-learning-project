@@ -58,3 +58,13 @@
 "SIM_20250915_164817","M1","capacidad_endeud",NA,NA,NA,NA,NA
 "SIM_20250915_164817","M1","endeudamiento_total",NA,NA,NA,NA,NA
 "SIM_20250915_170856","M2",NA,"edad|ingreso_verificado|rfm|score_buro","ingreso_verificado|score_buro|(Intercept)|rfm","ingreso_verificado|score_buro|rfm",0.05,"2025-09-15 17:09:14.258331"
+"SIM_20250915_171449","M1","edad","","","",NA,""
+"SIM_20250915_171449","M1","ingreso_declarado","","","",NA,""
+"SIM_20250915_171449","M1","rfm","","","",NA,""
+"SIM_20250915_171449","M1","score_buro","","","",NA,""
+"SIM_20250915_171449","M2",NA,"edad|ingreso_verificado|rfm|score_buro|cluster_id","ingreso_verificado|score_buro|(Intercept)|rfm","score_buro|ingreso_verificado",0.05,"2025-09-15 17:15:15.179052"
+"SIM_20250915_171902","M1","edad","","","",NA,""
+"SIM_20250915_171902","M1","ingreso_declarado","","","",NA,""
+"SIM_20250915_171902","M1","rfm","","","",NA,""
+"SIM_20250915_171902","M1","score_buro","","","",NA,""
+"SIM_20250915_171902","M2",NA,"edad|ingreso_verificado|rfm|score_buro","ingreso_verificado|score_buro|(Intercept)|rfm","score_buro|ingreso_verificado",0.05,"2025-09-15 17:19:36.424391"
