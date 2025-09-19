@@ -20,7 +20,19 @@ persist_variables_modelos <- function(id_sim, modulo, vars, path="data"){
 persist_clientes_clusters <- function(id_sim, id_cliente, cluster_id, path="data"){
   dir.ensure(path)
   f <- file.path(path, "clientes_clusters.csv")
-  df <- data.frame(id_sim, id_cliente, cluster_id, stringsAsFactors = FALSE)
-  if(file.exists(f)) write.table(df, f, sep=",", row.names=FALSE, col.names=FALSE, append=TRUE)
-  else write.table(df, f, sep=",", row.names=FALSE, col.names=TRUE)
+  df <- data.frame(
+    id_sim = id_sim,
+    id_cliente = as.character(id_cliente),
+    cluster_id = cluster_id,
+    timestamp = as.character(Sys.time()),
+    stringsAsFactors = FALSE
+  )
+  tryCatch({
+    if(file.exists(f)) write.table(df, f, sep=",", row.names=FALSE, col.names=FALSE, append=TRUE)
+    else write.table(df, f, sep=",", row.names=FALSE, col.names=TRUE)
+    TRUE
+  }, error = function(e) {
+    message("Error guardando clusters: ", conditionMessage(e))
+    FALSE
+  })
 }

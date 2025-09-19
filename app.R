@@ -5,6 +5,9 @@ library(DT)
 library(cluster)  # para distancia/silueta en M1
 library(pROC)     # para AUC en M2
 library(shinyjs)
+library(ggplot2)  # para gráficos en M3
+library(reshape2) # para melt() en heatmaps de correlación
+library(MASS)     # para stepAIC en M3
 
 # ---- Sourcing: Módulo 1
 source("R/gen_datos.R")
@@ -35,7 +38,15 @@ ui <- navbarPage(
   title = "Simulación Campaña Préstamos",
   tabPanel("Módulo 1: Perfilamiento", mod_m1_ui("m1")),
   tabPanel("Módulo 2: Scoring",       mod_m2_ui("m2")),
-  tabPanel("Módulo 3: Pricing",       mod_m3_ui("m3"))
+  tabPanel("Módulo 3: Pricing",       mod_m3_ui("m3")),
+  tabPanel("Exportar Datos",
+    fluidPage(
+      h3("Exportar Datos Simulados"),
+      p("Exporta los datos simulados base a un archivo CSV para análisis posterior."),
+      actionButton("export_simulated_data", "Exportar Datos Simulados a CSV",
+                   class = "btn-primary")
+    )
+  )
 )
 
 # --------------- Server --------------
@@ -134,6 +145,29 @@ server <- function(input, output, session){
     datos_reactivos = datos_para_m3,  # df con cliente + p_accept/p_mora + oferta
     id_sim = id_sim
   )
+
+  # 7) Exportar datos simulados a CSV
+  observeEvent(input$export_simulated_data, {
+    tryCatch({
+      # Combinar todos los datos simulados en un solo data.frame
+      simulated_data <- Reduce(function(x, y) merge(x, y, by = "id_cliente", all = TRUE),
+                              list(datos$demograficas, datos$financieras,
+                                   datos$comp_historico, datos$post_desembolso))
+
+      # Agregar timestamp
+      simulated_data$timestamp <- as.character(Sys.time())
+      simulated_data$id_sim <- id_sim
+
+      # Guardar en CSV
+      dir.create("data", showWarnings = FALSE)
+      file_path <- file.path("data", "datos_simulados.csv")
+      write.csv(simulated_data, file_path, row.names = FALSE)
+
+      showNotification(paste("Datos simulados guardados en", file_path), type = "message")
+    }, error = function(e) {
+      showNotification(paste("Error exportando datos simulados:", conditionMessage(e)), type = "error")
+    })
+  })
 }
 
 shinyApp(ui, server)

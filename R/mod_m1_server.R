@@ -276,14 +276,22 @@ mod_m1_server <- function(input, output, session, datos_reactivos, id_sim){
       criterio_k     = "mixto"
     )
 
-    id_cliente <- seq_len(nrow(rv$scores))
-    persist_clientes_clusters(
+    id_cliente <- as.character(seq_len(nrow(rv$scores)))
+    success <- persist_clientes_clusters(
       id_sim     = id_sim,
       id_cliente = id_cliente,
       cluster_id = as.integer(rv$clusters)
     )
 
-    showNotification("Decisión confirmada y guardada. Módulo 1 completado.", type = "message")
+    if (success) {
+      # Store clusters in session for M2/M3
+      session$userData$clusters <- data.frame(id_cliente = id_cliente, cluster_id = as.integer(rv$clusters))
+      showNotification("Clusters guardados en data/clientes_clusters.csv. Módulo 1 completado.", type = "message")
+    } else {
+      showNotification("Error guardando clusters en CSV, pero datos disponibles en sesión.", type = "warning")
+      # Still store in session as fallback
+      session$userData$clusters <- data.frame(id_cliente = id_cliente, cluster_id = as.integer(rv$clusters))
+    }
   })
 
   # -------------------------

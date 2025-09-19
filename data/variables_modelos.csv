@@ -1,70 +1,47 @@
 "id_sim","modulo","variable","vars_candidatas","vars_accept_keep","vars_mora_keep","alpha","fecha"
-"SIM_20250901_145025","M1","edad",NA,NA,NA,NA,NA
-"SIM_20250901_145025","M1","ingreso_declarado",NA,NA,NA,NA,NA
-"SIM_20250901_145025","M1","rfm",NA,NA,NA,NA,NA
-"SIM_20250901_145025","M1","score_buro",NA,NA,NA,NA,NA
-"SIM_20250901_145624","M1","edad",NA,NA,NA,NA,NA
-"SIM_20250901_145624","M1","ingreso_declarado",NA,NA,NA,NA,NA
-"SIM_20250901_145624","M1","rfm",NA,NA,NA,NA,NA
-"SIM_20250901_145624","M1","score_buro",NA,NA,NA,NA,NA
-"SIM_20250901_145729","M1","edad",NA,NA,NA,NA,NA
-"SIM_20250901_145729","M1","ingreso_declarado",NA,NA,NA,NA,NA
-"SIM_20250901_145729","M1","rfm",NA,NA,NA,NA,NA
-"SIM_20250901_145729","M1","score_buro",NA,NA,NA,NA,NA
-"SIM_20250901_153652","M1","edad",NA,NA,NA,NA,NA
-"SIM_20250901_153652","M1","ingreso_declarado",NA,NA,NA,NA,NA
-"SIM_20250901_153652","M1","rfm",NA,NA,NA,NA,NA
-"SIM_20250901_153652","M1","score_buro",NA,NA,NA,NA,NA
-"SIM_20250901_153737","M1","edad",NA,NA,NA,NA,NA
-"SIM_20250901_153737","M1","ingreso_declarado",NA,NA,NA,NA,NA
-"SIM_20250901_153737","M1","rfm",NA,NA,NA,NA,NA
-"SIM_20250901_153737","M1","score_buro",NA,NA,NA,NA,NA
-"SIM_20250901_155547","M1","edad",NA,NA,NA,NA,NA
-"SIM_20250901_155547","M1","ingreso_declarado",NA,NA,NA,NA,NA
-"SIM_20250901_155547","M1","rfm",NA,NA,NA,NA,NA
-"SIM_20250901_155547","M1","score_buro",NA,NA,NA,NA,NA
-"SIM_20250901_164742","M1","edad",NA,NA,NA,NA,NA
-"SIM_20250901_164742","M1","ingreso_declarado",NA,NA,NA,NA,NA
-"SIM_20250901_164742","M1","rfm",NA,NA,NA,NA,NA
-"SIM_20250901_164742","M1","score_buro",NA,NA,NA,NA,NA
-"SIM_20250901_164803","M1","edad",NA,NA,NA,NA,NA
-"SIM_20250901_164803","M1","ingreso_declarado",NA,NA,NA,NA,NA
-"SIM_20250901_164803","M1","rfm",NA,NA,NA,NA,NA
-"SIM_20250901_164803","M1","score_buro",NA,NA,NA,NA,NA
-"SIM_20250908_105945","M1","edad",NA,NA,NA,NA,NA
-"SIM_20250908_105945","M1","estado_civil",NA,NA,NA,NA,NA
-"SIM_20250908_105945","M1","ubicacion",NA,NA,NA,NA,NA
-"SIM_20250908_105945","M1","nivel_educativo",NA,NA,NA,NA,NA
-"SIM_20250908_105945","M1","n_dependientes",NA,NA,NA,NA,NA
-"SIM_20250908_105945","M1","ingreso_declarado",NA,NA,NA,NA,NA
-"SIM_20250908_105945","M1","ingreso_verificado",NA,NA,NA,NA,NA
-"SIM_20250908_105945","M1","rfm",NA,NA,NA,NA,NA
-"SIM_20250908_105945","M1","score_buro",NA,NA,NA,NA,NA
-"SIM_20250908_105945","M1","capacidad_endeud",NA,NA,NA,NA,NA
-"SIM_20250908_105945","M1","endeudamiento_total",NA,NA,NA,NA,NA
-"SIM_20250915_161447","M1","edad",NA,NA,NA,NA,NA
-"SIM_20250915_161447","M1","rubro_laboral",NA,NA,NA,NA,NA
-"SIM_20250915_161447","M1","n_dependientes",NA,NA,NA,NA,NA
-"SIM_20250915_161447","M1","antiguedad_cliente",NA,NA,NA,NA,NA
-"SIM_20250915_161447","M1","ingreso_declarado",NA,NA,NA,NA,NA
-"SIM_20250915_161447","M1","ingreso_verificado",NA,NA,NA,NA,NA
-"SIM_20250915_161447","M1","rfm",NA,NA,NA,NA,NA
-"SIM_20250915_161447","M1","score_buro",NA,NA,NA,NA,NA
-"SIM_20250915_161447","M1","capacidad_endeud",NA,NA,NA,NA,NA
-"SIM_20250915_164817","M1","edad",NA,NA,NA,NA,NA
-"SIM_20250915_164817","M1","ingreso_declarado",NA,NA,NA,NA,NA
-"SIM_20250915_164817","M1","rfm",NA,NA,NA,NA,NA
-"SIM_20250915_164817","M1","score_buro",NA,NA,NA,NA,NA
-"SIM_20250915_164817","M1","capacidad_endeud",NA,NA,NA,NA,NA
-"SIM_20250915_164817","M1","endeudamiento_total",NA,NA,NA,NA,NA
-"SIM_20250915_170856","M2",NA,"edad|ingreso_verificado|rfm|score_buro","ingreso_verificado|score_buro|(Intercept)|rfm","ingreso_verificado|score_buro|rfm",0.05,"2025-09-15 17:09:14.258331"
-"SIM_20250915_171449","M1","edad","","","",NA,""
-"SIM_20250915_171449","M1","ingreso_declarado","","","",NA,""
-"SIM_20250915_171449","M1","rfm","","","",NA,""
-"SIM_20250915_171449","M1","score_buro","","","",NA,""
-"SIM_20250915_171449","M2",NA,"edad|ingreso_verificado|rfm|score_buro|cluster_id","ingreso_verificado|score_buro|(Intercept)|rfm","score_buro|ingreso_verificado",0.05,"2025-09-15 17:15:15.179052"
-"SIM_20250915_171902","M1","edad","","","",NA,""
-"SIM_20250915_171902","M1","ingreso_declarado","","","",NA,""
-"SIM_20250915_171902","M1","rfm","","","",NA,""
-"SIM_20250915_171902","M1","score_buro","","","",NA,""
-"SIM_20250915_171902","M2",NA,"edad|ingreso_verificado|rfm|score_buro","ingreso_verificado|score_buro|(Intercept)|rfm","score_buro|ingreso_verificado",0.05,"2025-09-15 17:19:36.424391"
+"SIM_20250918_175510","M1","edad",NA,NA,NA,NA,NA
+"SIM_20250918_175510","M1","ingreso_declarado",NA,NA,NA,NA,NA
+"SIM_20250918_175510","M1","rfm",NA,NA,NA,NA,NA
+"SIM_20250918_175510","M1","score_buro",NA,NA,NA,NA,NA
+"SIM_20250918_175510","M2",NA,"edad|ingreso_verificado|rfm|score_buro|cluster_id","ingreso_verificado|score_buro|(Intercept)|rfm","score_buro|ingreso_verificado",0.05,"2025-09-18 17:55:38.490324"
+"SIM_20250918_175510","M2",NA,"edad|ingreso_verificado|rfm|score_buro|cluster_id","ingreso_verificado|score_buro|(Intercept)|rfm","score_buro|ingreso_verificado",0.05,"2025-09-18 17:55:47.187894"
+"SIM_20250918_180320","M1","edad","","","",NA,""
+"SIM_20250918_180320","M1","ingreso_declarado","","","",NA,""
+"SIM_20250918_180320","M1","rfm","","","",NA,""
+"SIM_20250918_180320","M1","score_buro","","","",NA,""
+"SIM_20250918_180320","M2",NA,"edad|ingreso_verificado|rfm|score_buro|cluster_id","ingreso_verificado|rfm|score_buro|(Intercept)","score_buro|ingreso_verificado",0.05,"2025-09-18 18:03:47.128549"
+"SIM_20250918_180654","M1","edad","","","",NA,""
+"SIM_20250918_180654","M1","ingreso_declarado","","","",NA,""
+"SIM_20250918_180654","M1","rfm","","","",NA,""
+"SIM_20250918_180654","M1","score_buro","","","",NA,""
+"SIM_20250918_180654","M2",NA,"edad|ingreso_verificado|rfm|score_buro|cluster_id","ingreso_verificado|score_buro|rfm","score_buro|ingreso_verificado",0.05,"2025-09-18 18:07:19.046864"
+"SIM_20250918_181340","M1","edad","","","",NA,""
+"SIM_20250918_181340","M1","ingreso_declarado","","","",NA,""
+"SIM_20250918_181340","M1","rfm","","","",NA,""
+"SIM_20250918_181340","M1","score_buro","","","",NA,""
+"SIM_20250918_181340","M2",NA,"edad|ingreso_verificado|rfm|score_buro|cluster_id","ingreso_verificado|rfm|score_buro","ingreso_verificado|score_buro|rfm",0.05,"2025-09-18 18:14:07.410522"
+"SIM_20250918_183331","M1","edad","","","",NA,""
+"SIM_20250918_183331","M1","ingreso_declarado","","","",NA,""
+"SIM_20250918_183331","M1","rfm","","","",NA,""
+"SIM_20250918_183331","M1","score_buro","","","",NA,""
+"SIM_20250918_183331","M2",NA,"edad|ingreso_verificado|rfm|score_buro|cluster_id","ingreso_verificado|rfm|score_buro|(Intercept)","ingreso_verificado|score_buro",0.05,"2025-09-18 18:33:53.714311"
+"SIM_20250918_184515","M1","edad","","","",NA,""
+"SIM_20250918_184515","M1","ingreso_declarado","","","",NA,""
+"SIM_20250918_184515","M1","rfm","","","",NA,""
+"SIM_20250918_184515","M1","score_buro","","","",NA,""
+"SIM_20250918_184515","M2",NA,"edad|ingreso_verificado|rfm|score_buro|cluster_id","ingreso_verificado|rfm|score_buro|(Intercept)","ingreso_verificado|score_buro|rfm",0.05,"2025-09-18 18:45:43.567746"
+"SIM_20250918_185227","M1","edad","","","",NA,""
+"SIM_20250918_185227","M1","ingreso_declarado","","","",NA,""
+"SIM_20250918_185227","M1","rfm","","","",NA,""
+"SIM_20250918_185227","M1","score_buro","","","",NA,""
+"SIM_20250918_185227","M2",NA,"edad|ingreso_verificado|rfm|score_buro|cluster_id","ingreso_verificado|rfm|score_buro|edad","ingreso_verificado|score_buro",0.05,"2025-09-18 18:52:53.293716"
+"SIM_20250918_192540","M1","edad","","","",NA,""
+"SIM_20250918_192540","M1","ingreso_declarado","","","",NA,""
+"SIM_20250918_192540","M1","rfm","","","",NA,""
+"SIM_20250918_192540","M1","score_buro","","","",NA,""
+"SIM_20250918_192540","M2",NA,"edad|ingreso_verificado|rfm|score_buro|cluster_id","ingreso_verificado|rfm|score_buro","ingreso_verificado|score_buro",0.05,"2025-09-18 19:26:13.96549"
+"SIM_20250918_193412","M1","edad","","","",NA,""
+"SIM_20250918_193412","M1","ingreso_declarado","","","",NA,""
+"SIM_20250918_193412","M1","rfm","","","",NA,""
+"SIM_20250918_193412","M1","score_buro","","","",NA,""
+"SIM_20250918_193412","M2",NA,"edad|ingreso_verificado|rfm|score_buro|cluster_id","ingreso_verificado|rfm|score_buro","ingreso_verificado|score_buro|rfm",0.05,"2025-09-18 19:34:36.106108"

@@ -82,6 +82,11 @@ persist_clientes_scores <- function(id_sim, df_clientes){
     stop("persist_clientes_scores: 'df_clientes' debe ser data.frame.")
   }
 
+  # Asegurar id_cliente como character
+  if ("id_cliente" %in% names(df_clientes)) {
+    df_clientes$id_cliente <- as.character(df_clientes$id_cliente)
+  }
+
   # Redondeo a 4 decimales
   for (nm in c("p_accept","p_mora","score")) {
     if (nm %in% names(df_clientes)) {
@@ -89,8 +94,9 @@ persist_clientes_scores <- function(id_sim, df_clientes){
     }
   }
 
-  # id_sim como columna (al final o al inicio, aquí al final)
+  # Agregar columnas requeridas
   df_clientes$id_sim <- id_sim
+  df_clientes$timestamp <- as.character(Sys.time())
 
   # Evitar que se re-encodeen nombres de columnas
   attr(df_clientes, "stringsAsFactors") <- FALSE

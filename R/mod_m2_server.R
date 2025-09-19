@@ -120,6 +120,14 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
       incProgress(0.1)
 
       base <- get_base_df(d)
+
+      # Merge cluster_id from M1 if available
+      cluster_file <- file.path("data", "clientes_clusters.csv")
+      if (file.exists(cluster_file)) {
+        clusters <- read.csv(cluster_file, stringsAsFactors = FALSE)
+        base <- merge(base, clusters[, c("id_cliente", "cluster_id")], by = "id_cliente", all.x = TRUE)
+      }
+
       rv$base <- base
 
       if (!all(c("acepta","mora") %in% names(base))) {
@@ -452,12 +460,15 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
     shiny::req(rv$score, rv$id_cliente)
     decision <- as.integer(rv$score >= rv$thr_current)
     rv$df_scores <- data.frame(
-      id_cliente = rv$id_cliente,
+      id_cliente = as.character(rv$id_cliente),
       p_accept = round(rv$probs_accept, 4),
       p_mora   = round(rv$probs_mora, 4),
       score    = round(rv$score, 4),
-      decision = decision
+      decision = decision,
+      stringsAsFactors = FALSE
     )
+    # Store scores in session for M3
+    session$userData$scores <- rv$df_scores
   })
 
   output$plot_scores <- shiny::renderPlot({
@@ -498,6 +509,8 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
   observeEvent(input$confirmar, {
     shiny::req(rv$metrics_current, rv$df_scores)
     m <- rv$metrics_current
+
+    # Persist evaluation metrics
     persist_eval_m2(
       id_sim = id_sim,
       auc_accept = rv$auc_accept, auc_mora = rv$auc_mora,
@@ -505,7 +518,11 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
       accuracy = m$accuracy, sensibilidad = m$sensibilidad,
       especificidad = m$especificidad, precision = m$precision, f1 = m$f1
     )
-    persist_clientes_scores(id_sim = id_sim, df_clientes = rv$df_scores)
+
+    # Persist client scores with error handling
+    scores_saved <- persist_clientes_scores(id_sim = id_sim, df_clientes = rv$df_scores)
+
+    # Persist variables
     persist_variables_m2(
       id_sim = id_sim,
       vars_candidatas = input$vars,
@@ -513,7 +530,12 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
       vars_mora_keep   = input$keep_vars_mora,
       alpha_sig = input$alpha
     )
-    shiny::showNotification("Resultados guardados en data/*.csv", type = "message")
+
+    if (scores_saved) {
+      shiny::showNotification("Scores y decisiones guardados en data/clientes_scores.csv", type = "message")
+    } else {
+      shiny::showNotification("Error guardando scores en CSV, pero datos disponibles en sesión", type = "warning")
+    }
   }, ignoreInit = TRUE)
 
   observeEvent(input$reiniciar, {
