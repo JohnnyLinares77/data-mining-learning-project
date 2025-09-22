@@ -109,12 +109,47 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
   )
 
   # ----------------------------
+  # Actualizar variables disponibles dinámicamente
+  # ----------------------------
+  observe({
+    # Verificar si hay datos de clusters filtrados
+    cluster_file <- file.path("data", "clientes_clusters.csv")
+    if (file.exists(cluster_file)) {
+      clusters <- read.csv(cluster_file, stringsAsFactors = FALSE)
+      if (!is.null(clusters$cluster_id) && length(unique(clusters$cluster_id)) == 1) {
+        # Todos tienen el mismo cluster, remover cluster_id de las opciones disponibles
+        vars_originales <- c(
+          "edad","estado_civil","ubicacion","nivel_educativo","tipo_ocupacion","rubro_laboral","n_dependientes",
+          "antiguedad_cliente","n_moras_previas","dias_atraso_max","n_moras_leves",
+          "ingreso_declarado","ingreso_verificado","cuota_ingreso",
+          "capacidad_endeudamiento","endeudamiento_total","rfm","score_buro","tendencia_ingresos",
+          "cluster_id"
+        )
+        vars_filtradas <- setdiff(vars_originales, "cluster_id")
+
+        # Actualizar las choices del checkbox
+        shiny::updateCheckboxGroupInput(session, "vars",
+                                      choices = vars_filtradas,
+                                      selected = intersect(vars_filtradas, c("edad","ingreso_verificado","rfm","score_buro")))
+      }
+    }
+  })
+
+  # ----------------------------
   # Entrenamiento inicial
   # ----------------------------
   observeEvent(input$train_models, {
     shiny::req(datos_reactivos)
     d <- datos_reactivos()
     shiny::req(d)
+
+    # VALIDACIÓN: Verificar que hay datos de M1 (clusters)
+    if (is.null(session$userData$clusters) || nrow(session$userData$clusters) == 0) {
+      shiny::showNotification(
+        "No hay datos de clusters del Módulo 1. Complete el Módulo 1 primero.",
+        type = "warning"
+      )
+    }
 
     shiny::withProgress(message = "Entrenando modelos...", value = 0, {
       incProgress(0.1)
@@ -126,6 +161,31 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
       if (file.exists(cluster_file)) {
         clusters <- read.csv(cluster_file, stringsAsFactors = FALSE)
         base <- merge(base, clusters[, c("id_cliente", "cluster_id")], by = "id_cliente", all.x = TRUE)
+
+        # FILTRADO DE EMBUDO: Si hay datos de clusters filtrados, usar SOLO esos clientes
+        if (!is.null(base$cluster_id) && any(!is.na(base$cluster_id))) {
+          clientes_con_cluster <- base[!is.na(base$cluster_id), ]
+          n_original <- nrow(base)
+          n_filtrados <- nrow(clientes_con_cluster)
+
+          if (n_filtrados > 0) {
+            base <- clientes_con_cluster
+            shiny::showNotification(
+              sprintf("Filtrado por cluster M1: %d/%d clientes retenidos (%.1f%%)",
+                      n_filtrados, n_original, 100 * n_filtrados / n_original),
+              type = "message", duration = 5
+            )
+          }
+
+          # Si todos los clientes tienen el mismo cluster_id (filtrado automático), removerlo de variables disponibles
+          if (length(unique(base$cluster_id)) == 1) {
+            shiny::showNotification(
+              sprintf("Cluster %d seleccionado en M1. Todos los clientes son del mismo cluster - cluster_id removido de variables disponibles.",
+                      unique(base$cluster_id)),
+              type = "message", duration = 5
+            )
+          }
+        }
       }
 
       rv$base <- base
@@ -136,12 +196,22 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
         base$mora   <- labs$mora
       }
 
+      # Filtrar variables disponibles: excluir cluster_id si todos tienen el mismo valor
+      vars_disponibles <- input$vars
+      if (!is.null(base$cluster_id) && length(unique(base$cluster_id)) == 1) {
+        vars_disponibles <- setdiff(vars_disponibles, "cluster_id")
+        if (length(vars_disponibles) == 0) {
+          shiny::showNotification("No hay variables disponibles después de filtrar cluster_id", type = "error")
+          return(NULL)
+        }
+      }
+
       shiny::validate(
-        shiny::need(length(input$vars) > 0, "Selecciona al menos una variable.")
+        shiny::need(length(vars_disponibles) > 0, "Selecciona al menos una variable.")
       )
 
-      Xacc <- make_design(base, input$vars)
-      Xm   <- make_design(base, input$vars)
+      Xacc <- make_design(base, vars_disponibles)
+      Xm   <- make_design(base, vars_disponibles)
 
       rv$id_cliente <- attr(Xacc, "id_cliente")
       rv$X_accept   <- Xacc
@@ -510,6 +580,39 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
     shiny::req(rv$metrics_current, rv$df_scores)
     m <- rv$metrics_current
 
+    # VALIDACIÓN: Verificar que hay datos de scores
+    if (is.null(rv$df_scores) || nrow(rv$df_scores) == 0) {
+      shiny::showNotification("No hay datos de scores disponibles para confirmar.", type = "error")
+      return(NULL)
+    }
+
+    # VALIDACIÓN: Verificar que la columna decision existe
+    if (!"decision" %in% names(rv$df_scores)) {
+      shiny::showNotification("Los datos de scores no contienen columna 'decision'.", type = "error")
+      return(NULL)
+    }
+
+    # FILTRADO DE EMBUDO: Aplicar umbral y filtrar solo clientes APROBADOS
+    df_scores_filtrados <- rv$df_scores[rv$df_scores$decision == 1, ]
+
+    n_total <- nrow(rv$df_scores)
+    n_aprobados <- nrow(df_scores_filtrados)
+    pct_aprobados <- round(100 * n_aprobados / n_total, 1)
+
+    # VALIDACIÓN: Verificar que quedan clientes después del filtrado
+    if (n_aprobados == 0) {
+      shiny::showNotification("Ningún cliente fue aprobado con el umbral actual. Ajuste el umbral.", type = "warning")
+      return(NULL)
+    }
+
+    # VALIDACIÓN: Verificar que no se pierden demasiados clientes (advertencia)
+    if (pct_aprobados < 5) {
+      shiny::showNotification(
+        sprintf("Solo %.1f%% de clientes aprobados. Considere bajar el umbral.", pct_aprobados),
+        type = "warning", duration = 8
+      )
+    }
+
     # Persist evaluation metrics
     persist_eval_m2(
       id_sim = id_sim,
@@ -519,8 +622,8 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
       especificidad = m$especificidad, precision = m$precision, f1 = m$f1
     )
 
-    # Persist client scores with error handling
-    scores_saved <- persist_clientes_scores(id_sim = id_sim, df_clientes = rv$df_scores)
+    # Persist filtered client scores (only approved clients)
+    scores_saved <- persist_clientes_scores(id_sim = id_sim, df_clientes = df_scores_filtrados)
 
     # Persist variables
     persist_variables_m2(
@@ -532,9 +635,22 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
     )
 
     if (scores_saved) {
-      shiny::showNotification("Scores y decisiones guardados en data/clientes_scores.csv", type = "message")
+      # Store filtered scores in session for M3 (only approved clients)
+      session$userData$scores <- df_scores_filtrados
+
+      shiny::showNotification(
+        sprintf("Umbral aplicado: %d/%d clientes aprobados (%.1f%%). Scores guardados en data/clientes_scores.csv",
+                n_aprobados, n_total, pct_aprobados),
+        type = "message", duration = 6
+      )
     } else {
-      shiny::showNotification("Error guardando scores en CSV, pero datos disponibles en sesión", type = "warning")
+      # Still store filtered data in session as fallback
+      session$userData$scores <- df_scores_filtrados
+      shiny::showNotification(
+        sprintf("Umbral aplicado: %d/%d clientes aprobados (%.1f%%). Error guardando CSV, pero datos disponibles en sesión",
+                n_aprobados, n_total, pct_aprobados),
+        type = "warning", duration = 6
+      )
     }
   }, ignoreInit = TRUE)
 

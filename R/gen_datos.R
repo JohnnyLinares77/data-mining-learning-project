@@ -68,11 +68,44 @@ gen_datos <- function(n_clientes = 1000L, seed = 123L){
     stringsAsFactors    = FALSE
   )
 
+  # --- OFERTAS HISTÓRICAS (para M3 - simular datos históricos de ofertas)
+  # Generar múltiples ofertas por cliente para simular historial
+  n_ofertas_total <- n_clientes * 3  # 3 ofertas promedio por cliente
+  id_cliente_ofertas <- rep(1:n_clientes, each = 3)
+
+  ofertas_historicas <- data.frame(
+    id_cliente = id_cliente_ofertas,
+    rate   = runif(n_ofertas_total, 0.03, 0.12),  # tasas históricas ofrecidas
+    amount = round(runif(n_ofertas_total, 1000, 25000), 0),  # montos históricos
+    term   = sample(c(3,6,9,12,18,24,36,48), n_ofertas_total, replace = TRUE),  # plazos históricos
+    stringsAsFactors = FALSE
+  )
+
+  # Hacer que las ofertas dependan del perfil del cliente (más conservadoras para clientes de riesgo)
+  for(i in 1:n_clientes) {
+    cliente_rows <- ofertas_historicas$id_cliente == i
+    score_buro_i <- financieras$score_buro[i]
+    ingreso_i <- financieras$ingreso_verificado[i]
+    moras_i <- comp_historico$n_moras_previas[i]
+
+    # Clientes con mejor score/income: ofertas más agresivas (tasas más bajas, montos más altos)
+    rate_adjust <- ifelse(score_buro_i > 700 & ingreso_i > 5000 & moras_i == 0, -0.02,
+                         ifelse(score_buro_i < 500 | moras_i > 2, 0.03, 0))
+    amount_adjust <- ifelse(score_buro_i > 700 & ingreso_i > 5000, 5000,
+                           ifelse(score_buro_i < 500, -5000, 0))
+
+    ofertas_historicas$rate[cliente_rows] <- pmax(0.03, pmin(0.15,
+      ofertas_historicas$rate[cliente_rows] + rate_adjust))
+    ofertas_historicas$amount[cliente_rows] <- pmax(500, pmin(30000,
+      ofertas_historicas$amount[cliente_rows] + amount_adjust))
+  }
+
   list(
-    demograficas    = demograficas,
-    comp_historico  = comp_historico,
-    financieras     = financieras,
-    post_desembolso = post_desembolso,
-    simulacion_meta = data.frame(id_sim = NA, seed = seed, fecha = Sys.time())
+    demograficas      = demograficas,
+    comp_historico    = comp_historico,
+    financieras       = financieras,
+    post_desembolso   = post_desembolso,
+    ofertas_historicas = ofertas_historicas,
+    simulacion_meta   = data.frame(id_sim = NA, seed = seed, fecha = Sys.time())
   )
 }

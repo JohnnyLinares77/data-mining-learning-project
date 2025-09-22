@@ -13,8 +13,85 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
   # ----------------------------
   rv <- shiny::reactiveValues(
     metrics = NULL,     # lista con $manual y/o $auto (rmse, r2_adj, alpha, vars)
-    sim_results = NULL  # resultados de simulación (para persistir)
+    sim_results = NULL, # resultados de simulación (para persistir)
+    cor_data = NULL     # datos procesados para correlaciones (df, vars_valid, vars_in_cor)
   )
+
+  # ----------------------------
+  # Actualizar variables disponibles cuando cambien los datos
+  # ----------------------------
+  observe({
+    # Obtener datos para mostrar variables disponibles
+    datos <- datos_reactivos()
+    if (!is.null(datos)) {
+      df <- .get_base_df(datos)
+
+      # Lista de numéricas disponible
+      num_vars <- names(df)[vapply(df, is.numeric, TRUE)]
+      exclude_vars <- c("ME","id_cliente","p_accept","p_mora",
+                        grep("\\.x$|\\.y$|\\.cluster$|\\.score$", num_vars, value = TRUE))
+      num_vars <- setdiff(num_vars, exclude_vars)
+
+      # VALIDACIÓN: Verificar que hay variables numéricas disponibles
+      if (length(num_vars) == 0) {
+        shiny::showNotification("No hay variables numéricas disponibles en los datos.", type = "error")
+        shiny::updateCheckboxGroupInput(session, "vars_numeric", choices = character(0), selected = character(0))
+        return(NULL)
+      }
+
+      # Excluir variables que no varían (todos los valores iguales) - típico cuando hay filtrado
+      vars_con_variacion <- num_vars[sapply(df[, num_vars, drop = FALSE], function(x) {
+        vals <- x[!is.na(x)]
+        length(unique(vals)) > 1 && length(vals) > 0
+      })]
+
+      # VALIDACIÓN: Verificar que quedan variables con variación
+      if (length(vars_con_variacion) == 0) {
+        shiny::showNotification(
+          "Todas las variables numéricas tienen valores constantes. Esto puede deberse a un filtrado muy restrictivo en módulos anteriores.",
+          type = "warning", duration = 10
+        )
+        # Mantener al menos las variables básicas si existen
+        vars_basicas <- intersect(c("rate","amount","term"), num_vars)
+        if (length(vars_basicas) > 0) {
+          vars_con_variacion <- vars_basicas
+          shiny::showNotification(
+            sprintf("Usando variables básicas para continuar: %s", paste(vars_basicas, collapse = ", ")),
+            type = "message", duration = 5
+          )
+        } else {
+          shiny::updateCheckboxGroupInput(session, "vars_numeric", choices = character(0), selected = character(0))
+          return(NULL)
+        }
+      }
+
+      # Variables por defecto disponibles
+      selected_default <- c("rate","amount","term","score_buro","rfm","ingreso_verificado",
+                           "cluster_id","score")
+      selected_available <- intersect(selected_default, vars_con_variacion)
+
+      # Asegurar que hay al menos una variable seleccionada por defecto
+      if (length(selected_available) == 0 && length(vars_con_variacion) > 0) {
+        selected_available <- vars_con_variacion[1:min(3, length(vars_con_variacion))]
+      }
+
+      # Mostrar mensaje si se excluyeron variables por falta de variación
+      vars_excluidas <- setdiff(num_vars, vars_con_variacion)
+      if (length(vars_excluidas) > 0) {
+        shiny::showNotification(
+          sprintf("Variables excluidas por falta de variación: %s",
+                  paste(vars_excluidas, collapse = ", ")),
+          type = "message", duration = 5
+        )
+      }
+
+      shiny::updateCheckboxGroupInput(
+        session, "vars_numeric",
+        choices  = vars_con_variacion,
+        selected = selected_available
+      )
+    }
+  })
 
   # ----------------------------
   # Helpers (compatibles con M2)
@@ -22,7 +99,7 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
   .get_base_df <- function(d){
     if (is.data.frame(d)) return(d)
     if (!is.null(d$base)) return(d$base)
-    keys <- c("demograficas","financieras","comp_historico","clientes","post_desembolso")
+    keys <- c("demograficas","financieras","comp_historico","clientes","post_desembolso","ofertas_historicas")
     tabs <- tryCatch(Filter(Negate(is.null), d[keys]), error = function(e) list())
     if (length(tabs) == 0) stop("No se encontraron tablas base en datos_reactivos().")
     Reduce(function(a,b) merge(a,b, by = "id_cliente", all = TRUE), tabs)
@@ -60,23 +137,48 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
     shiny::req(datos_reactivos())
     df <- .get_base_df(datos_reactivos())
 
+    # Debug: Check initial data
+    if (nrow(df) == 0) {
+      stop("Datos iniciales vacíos de gen_datos()")
+    }
+
     # Ensure id_cliente is character
     df$id_cliente <- as.character(df$id_cliente)
 
     df <- .ensure_probs(df)
     df <- .ensure_pricing_pillars(df)
 
+    # Debug: Check after ensuring columns
+    if (nrow(df) == 0) {
+      stop("Data frame vacío después de .ensure_* functions")
+    }
+
     # Merge session data from M1 and M2 for current analysis
+    # Evitar duplicados de columnas usando suffixes específicos
     if (!is.null(session$userData$clusters)) {
       clusters <- session$userData$clusters
       clusters$id_cliente <- as.character(clusters$id_cliente)
-      df <- merge(df, clusters, by = "id_cliente", all.x = TRUE)
+      # Solo incluir columnas de clusters, excluir id_cliente del merge
+      cluster_cols <- setdiff(names(clusters), "id_cliente")
+      df <- merge(df, clusters[, c("id_cliente", cluster_cols), drop = FALSE],
+                  by = "id_cliente", all.x = TRUE, suffixes = c("", ".cluster"))
+      # Debug: Check after cluster merge
+      if (nrow(df) == 0) {
+        stop("Data frame vacío después del merge con clusters")
+      }
     }
 
     if (!is.null(session$userData$scores)) {
       scores_df <- session$userData$scores
       scores_df$id_cliente <- as.character(scores_df$id_cliente)
-      df <- merge(df, scores_df, by = "id_cliente", all.x = TRUE)
+      # Solo incluir columnas de scores, excluir id_cliente del merge
+      score_cols <- setdiff(names(scores_df), "id_cliente")
+      df <- merge(df, scores_df[, c("id_cliente", score_cols), drop = FALSE],
+                  by = "id_cliente", all.x = TRUE, suffixes = c("", ".score"))
+      # Debug: Check after scores merge
+      if (nrow(df) == 0) {
+        stop("Data frame vacío después del merge con scores")
+      }
     }
 
     # Historical CSV data is loaded separately for reference/display purposes
@@ -116,6 +218,18 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
     # ME final = componente base + ajuste directo
     df$ME <- base_me + me_adjustment
 
+    # VALIDACIÓN: Verificar que ME tiene valores razonables
+    me_range <- range(df$ME, na.rm = TRUE)
+    if (any(is.na(df$ME)) || any(is.infinite(df$ME))) {
+      shiny::showNotification("Algunos valores de ME son NA o infinitos. Verifique los datos.", type = "warning")
+    }
+    if (me_range[1] < -10000 || me_range[2] > 100000) {
+      shiny::showNotification(
+        sprintf("Valores de ME extremos detectados: [%.0f, %.0f]. Verifique los cálculos.", me_range[1], me_range[2]),
+        type = "warning"
+      )
+    }
+
     # Cluster para simulación
     if (is.null(cluster_levels)) {
       if ("cluster_id" %in% names(df)) {
@@ -131,15 +245,8 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
       shiny::updateSelectInput(session, "cluster_sim", choices = cluster_levels)
     }
 
-    # Lista de numéricas visible desde el inicio
-    # Excluir variables derivadas (ME, probabilidades) y IDs
-    num_vars <- names(df)[vapply(df, is.numeric, TRUE)]
-    num_vars <- setdiff(num_vars, c("ME","id_cliente","p_accept","p_mora"))
-    shiny::updateCheckboxGroupInput(
-      session, "vars_numeric",
-      choices  = num_vars,
-      selected = intersect(num_vars, c("rate","amount","term","score_buro","rfm","ingreso_verificado"))
-    )
+    # Nota: Las variables se actualizan en el observer de inicialización
+    # para que estén disponibles desde que se abre la pestaña
 
     df
   })
@@ -151,22 +258,86 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
   # Exploración: correlaciones con ME (bar plot + tabla)
   # ----------------------------
   observeEvent(input$calcular_cor, {
+    # VALIDACIÓN: Verificar dependencias de módulos anteriores
+    if (is.null(session$userData$clusters) || nrow(session$userData$clusters) == 0) {
+      shiny::showNotification(
+        "No hay datos de clusters del Módulo 1. Complete el Módulo 1 primero.",
+        type = "warning"
+      )
+    }
+    if (is.null(session$userData$scores) || nrow(session$userData$scores) == 0) {
+      shiny::showNotification(
+        "No hay datos de scores del Módulo 2. Complete el Módulo 2 primero.",
+        type = "warning"
+      )
+    }
+
     df   <- base_df()
     vars <- input$vars_numeric
     shiny::validate(shiny::need(length(vars) >= 1, "Selecciona al menos una variable numérica."))
+    shiny::validate(shiny::need(nrow(df) > 0, "No hay datos disponibles para calcular correlaciones."))
+    shiny::validate(shiny::need("ME" %in% names(df), "La variable respuesta ME no está disponible."))
+
+    # VALIDACIÓN: Verificar que hay datos suficientes
+    if (nrow(df) < 3) {
+      shiny::showNotification(
+        sprintf("Insuficientes datos para correlación (%d filas). Se necesitan al menos 3 observaciones.", nrow(df)),
+        type = "error"
+      )
+      return(NULL)
+    }
+
+    # Verificar que las variables existen en el dataframe
+    vars_available <- intersect(vars, names(df))
+    shiny::validate(shiny::need(length(vars_available) >= 1,
+      sprintf("Ninguna de las variables seleccionadas está disponible. Variables disponibles: %s",
+              paste(names(df)[vapply(df, is.numeric, TRUE)], collapse = ", "))))
 
     # Filter variables with positive variance to avoid zero SD warnings
-    vars <- vars[sapply(df[, vars, drop = FALSE], function(x) var(x, na.rm = TRUE) > 0)]
-    shiny::validate(shiny::need(length(vars) >= 1, "No hay variables con varianza positiva para correlación."))
+    vars_valid <- vars_available[sapply(df[, vars_available, drop = FALSE], function(x) {
+      vals <- x[!is.na(x)]
+      length(vals) >= 3 && var(vals) > 0
+    })]
+    shiny::validate(shiny::need(length(vars_valid) >= 1,
+      sprintf("No hay variables con varianza positiva y suficientes datos. Variables con problemas: %s",
+              paste(setdiff(vars_available, vars_valid), collapse = ", "))))
 
-    cols   <- intersect(unique(c(vars, "ME")), names(df))
+    cols   <- intersect(unique(c(vars_valid, "ME")), names(df))
     df_cor <- df[, cols, drop = FALSE]
     keep   <- vapply(df_cor, is.numeric, TRUE)
     df_cor <- df_cor[, keep, drop = FALSE]
     shiny::validate(shiny::need(ncol(df_cor) >= 2, "Datos insuficientes para correlación."))
 
+    # Check for sufficient complete cases for correlation
+    complete_rows <- sum(complete.cases(df_cor))
+    shiny::validate(shiny::need(complete_rows >= 3,
+      sprintf("Insuficientes casos completos para correlación (%d casos requeridos, %d disponibles).",
+              3, complete_rows)))
+
     cor_mat <- stats::cor(df_cor, use = "pairwise.complete.obs")
-    cor_with_me <- cor_mat["ME", vars, drop = FALSE]
+
+    # Verificar que ME existe en la matriz de correlación
+    if (!"ME" %in% rownames(cor_mat)) {
+      shiny::showNotification("La variable ME no está disponible para calcular correlaciones.", type = "error")
+      return(NULL)
+    }
+
+    # Solo incluir variables que existen en la matriz de correlación
+    vars_in_cor <- intersect(vars_valid, colnames(cor_mat))
+    if (length(vars_in_cor) == 0) {
+      shiny::showNotification("No hay variables válidas para calcular correlaciones con ME.", type = "error")
+      return(NULL)
+    }
+
+    cor_with_me <- cor_mat["ME", vars_in_cor, drop = FALSE]
+
+    # Guardar datos procesados para usar en VIF
+    rv$cor_data <- list(
+      df = df,
+      vars_valid = vars_valid,
+      vars_in_cor = vars_in_cor,
+      df_cor = df_cor
+    )
 
     # Validar que hay correlaciones válidas
     if (any(is.na(cor_with_me))) {
@@ -183,7 +354,7 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
       ggplot2::ggplot(cor_long, ggplot2::aes(x = Var1, y = Var2, fill = value)) +
         ggplot2::geom_tile(color = "white") +
         ggplot2::geom_text(ggplot2::aes(label = sprintf("%.2f", value)),
-                          color = "black", size = 3) +
+                          color = "black", size = 4, fontface = "bold") +
         ggplot2::scale_fill_gradient2(limits = c(-1,1), midpoint = 0,
                                       low = "steelblue", mid = "white", high = "tomato",
                                       name = "Correlación") +
@@ -199,6 +370,43 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
       DT::datatable(round(cor_mat, 3),
                     options = list(pageLength = 20, scrollX = TRUE))
     })
+
+    # Calcular VIF para detectar multicolinealidad
+    output$vif_table <- DT::renderDT({
+      # Usar datos procesados de correlaciones
+      if (is.null(rv$cor_data)) {
+        return(DT::datatable(data.frame(Variable = "Sin datos", VIF = "Calcule correlaciones primero"),
+                            options = list(dom = "t", paging = FALSE)))
+      }
+
+      cor_data <- rv$cor_data
+      vars_in_cor <- cor_data$vars_in_cor
+      df_vif_model <- cor_data$df_cor
+
+      if (length(vars_in_cor) < 2) {
+        return(DT::datatable(data.frame(Variable = "Insuficientes variables", VIF = "Se necesitan al menos 2 variables"),
+                            options = list(dom = "t", paging = FALSE)))
+      }
+
+      if (nrow(df_vif_model) < 3) {
+        return(DT::datatable(data.frame(Variable = "Pocos casos", VIF = "Insuficientes casos completos para VIF"),
+                            options = list(dom = "t", paging = FALSE)))
+      }
+
+      tryCatch({
+        # Crear fórmula sin ME usando las mismas variables que en correlaciones
+        form_str <- paste("ME ~", paste(vars_in_cor, collapse = " + "))
+        fit_vif <- stats::lm(stats::as.formula(form_str), data = df_vif_model)
+        vif_values <- car::vif(fit_vif)
+        vif_df <- data.frame(Variable = names(vif_values), VIF = as.numeric(vif_values))
+        DT::datatable(vif_df, options = list(dom = "t", paging = FALSE)) |>
+          DT::formatRound("VIF", 2)
+      }, error = function(e) {
+        # Si hay error en VIF, mostrar mensaje
+        DT::datatable(data.frame(Variable = "Error", VIF = paste("Error calculando VIF:", e$message)),
+                      options = list(dom = "t", paging = FALSE))
+      })
+    })
   }, ignoreInit = TRUE)
 
   # ----------------------------
@@ -211,11 +419,63 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
     vars <- input$vars_numeric
     shiny::validate(shiny::need(length(vars) >= 1, "Selecciona variables para el modelo."))
 
+    # Debug: Check data validity
+    shiny::validate(shiny::need(nrow(df) > 0, "No hay datos disponibles para entrenar el modelo."))
+    shiny::validate(shiny::need("ME" %in% names(df), "La variable respuesta ME no está disponible."))
+
+    # Check for complete cases
+    model_vars <- c("ME", vars)
+    complete_cases <- complete.cases(df[, model_vars, drop = FALSE])
+    shiny::validate(shiny::need(sum(complete_cases) > 0,
+      sprintf("No hay casos completos para modelar. Verifica que las variables seleccionadas no tengan valores faltantes.")))
+
+    # Use only complete cases
+    df_model <- df[complete_cases, model_vars, drop = FALSE]
+    shiny::validate(shiny::need(nrow(df_model) > 1, "Insuficientes casos completos para el modelo."))
+
     form_str <- paste("ME ~", paste(vars, collapse = " + "))
-    fit      <- stats::lm(stats::as.formula(form_str), data = df)
+    fit      <- stats::lm(stats::as.formula(form_str), data = df_model)
     modelo_manual(fit)
 
     output$model_summary <- shiny::renderPrint({ summary(fit) })
+
+    output$model_metrics <- DT::renderDT({
+      summ <- summary(fit)
+      mse <- mean(residuals(fit)^2)
+      metrics_df <- data.frame(
+        Métrica = c("R²", "R² Ajustado", "MSE", "F-statistic", "p-valor F"),
+        Valor = c(
+          round(summ$r.squared, 4),
+          round(summ$adj.r.squared, 4),
+          round(mse, 2),
+          round(summ$fstatistic[1], 2),
+          format.pval(pf(summ$fstatistic[1], summ$fstatistic[2], summ$fstatistic[3], lower.tail = FALSE), digits = 4)
+        )
+      )
+      DT::datatable(metrics_df, options = list(dom = "t", paging = FALSE))
+    })
+
+    # Tabla de coeficientes para análisis detallado
+    output$coef_table <- DT::renderDT({
+      summ <- summary(fit)
+      coef_df <- as.data.frame(summ$coefficients)
+      colnames(coef_df) <- c("Coeficiente", "Error Estándar", "t-value", "p-valor")
+      coef_df$Variable <- rownames(coef_df)
+      coef_df <- coef_df[, c("Variable", "Coeficiente", "Error Estándar", "t-value", "p-valor")]
+      coef_df$Significativo <- coef_df$`p-valor` < input$alpha
+
+      # Actualizar checkbox de variables a mantener
+      shiny::updateCheckboxGroupInput(session, "keep_vars",
+                                      choices = setdiff(rownames(coef_df), "(Intercept)"),
+                                      selected = setdiff(rownames(coef_df)[coef_df$Significativo], "(Intercept)"))
+
+      DT::datatable(coef_df, options = list(dom = "t", paging = FALSE)) |>
+        DT::formatRound(c("Coeficiente", "Error Estándar", "t-value"), 4) |>
+        DT::formatSignif("p-valor", 4) |>
+        DT::formatStyle("Significativo", target = "row",
+                        backgroundColor = DT::styleEqual(c(TRUE, FALSE), c("#d4edda", "#f8d7da")))
+    })
+
     output$resid_plot <- shiny::renderPlot({
       par(mfrow = c(1,2))
       plot(fit, which = 1)
@@ -225,53 +485,196 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
   }, ignoreInit = TRUE)
 
   # ----------------------------
+  # Reentrenar modelo con variables seleccionadas
+  # ----------------------------
+  observeEvent(input$retrain_model, {
+    df <- base_df()
+    vars_keep <- input$keep_vars
+    shiny::validate(shiny::need(length(vars_keep) >= 1, "Selecciona al menos una variable para reentrenar."))
+
+    # Debug: Check data validity
+    shiny::validate(shiny::need(nrow(df) > 0, "No hay datos disponibles para reentrenar el modelo."))
+    shiny::validate(shiny::need("ME" %in% names(df), "La variable respuesta ME no está disponible."))
+
+    # Check for complete cases
+    model_vars <- c("ME", vars_keep)
+    complete_cases <- complete.cases(df[, model_vars, drop = FALSE])
+    shiny::validate(shiny::need(sum(complete_cases) > 0,
+      sprintf("No hay casos completos para reentrenar. Verifica que las variables seleccionadas no tengan valores faltantes.")))
+
+    # Use only complete cases
+    df_model <- df[complete_cases, model_vars, drop = FALSE]
+    shiny::validate(shiny::need(nrow(df_model) > 1, "Insuficientes casos completos para reentrenar el modelo."))
+
+    form_str <- paste("ME ~", paste(vars_keep, collapse = " + "))
+    fit_new <- stats::lm(stats::as.formula(form_str), data = df_model)
+    modelo_manual(fit_new)
+
+    output$model_final_summary <- shiny::renderPrint({ summary(fit_new) })
+
+    # Actualizar métricas del modelo reentrenado
+    output$model_metrics <- DT::renderDT({
+      summ <- summary(fit_new)
+      mse <- mean(residuals(fit_new)^2)
+      metrics_df <- data.frame(
+        Métrica = c("R²", "R² Ajustado", "MSE", "F-statistic", "p-valor F"),
+        Valor = c(
+          round(summ$r.squared, 4),
+          round(summ$adj.r.squared, 4),
+          round(mse, 2),
+          round(summ$fstatistic[1], 2),
+          format.pval(pf(summ$fstatistic[1], summ$fstatistic[2], summ$fstatistic[3], lower.tail = FALSE), digits = 4)
+        )
+      )
+      DT::datatable(metrics_df, options = list(dom = "t", paging = FALSE))
+    })
+
+    shiny::showNotification("Modelo reentrenado con variables seleccionadas", type = "message")
+  }, ignoreInit = TRUE)
+
+  # ----------------------------
   # Modelo automático (stepAIC)
   # ----------------------------
   modelo_auto <- shiny::reactiveVal(NULL)
 
   observeEvent(input$ajustar_auto, {
+    # Mostrar indicador de progreso
+    progress <- shiny::Progress$new()
+    progress$set(message = "Generando modelo automático...", value = 0)
+    on.exit(progress$close())
+
     df <- base_df()
-    num_vars <- setdiff(names(df)[vapply(df, is.numeric, TRUE)], "ME")
-    full_form <- stats::as.formula(paste("ME ~", paste(num_vars, collapse = " + ")))
-    full_fit  <- stats::lm(full_form, data = df)
-    auto_fit  <- MASS::stepAIC(full_fit, direction = "both", trace = FALSE)
-    modelo_auto(auto_fit)
+    progress$set(value = 0.1, detail = "Verificando datos...")
 
-    output$auto_summary <- shiny::renderPrint({ summary(auto_fit) })
-
-    # Hold-out 30%
-    set.seed(123)
-    n   <- nrow(df)
-    idx <- sample.int(n, size = floor(0.3*n))
-    tr  <- df[-idx, ]; te <- df[idx, ]
-
-    rmse <- function(obs, pred) sqrt(mean((obs - pred)^2))
-
-    metrics_df   <- data.frame(Modelo = character(), RMSE = numeric(), R2_adj = numeric(), stringsAsFactors = FALSE)
-    metrics_list <- list()
-
-    if (!is.null(modelo_manual())) {
-      manual_fit_tr <- stats::lm(stats::formula(modelo_manual()), data = tr)
-      pred_man <- predict(manual_fit_tr, newdata = te)
-      rmse_man <- rmse(te$ME, pred_man)
-      r2_man   <- summary(manual_fit_tr)$adj.r.squared
-      metrics_df <- rbind(metrics_df, data.frame(Modelo = "Manual", RMSE = rmse_man, R2_adj = r2_man))
-      metrics_list$manual <- list(rmse = rmse_man, r2_adj = r2_man, alpha = input$alpha, vars = input$vars_numeric %||% character(0))
+    # VALIDACIÓN: Verificar datos básicos
+    if (is.null(df) || nrow(df) == 0) {
+      shiny::showNotification("No hay datos disponibles para entrenar el modelo automático.", type = "error")
+      return(NULL)
+    }
+    if (!"ME" %in% names(df)) {
+      shiny::showNotification("La variable respuesta ME no está disponible.", type = "error")
+      return(NULL)
     }
 
-    auto_fit_tr <- stats::lm(stats::formula(auto_fit), data = tr)
-    pred_auto   <- predict(auto_fit_tr, newdata = te)
-    rmse_auto <- rmse(te$ME, pred_auto)
-    r2_auto   <- summary(auto_fit_tr)$adj.r.squared
-    metrics_df <- rbind(metrics_df, data.frame(Modelo = "Automático", RMSE = rmse_auto, R2_adj = r2_auto))
-    auto_vars <- attr(terms(auto_fit), "term.labels")
-    metrics_list$auto <- list(rmse = rmse_auto, r2_adj = r2_auto, alpha = input$alpha, vars = auto_vars %||% character(0))
+    # VALIDACIÓN: Suficientes datos para modelado
+    n_datos <- nrow(df)
+    if (n_datos < 10) {
+      shiny::showNotification(
+        sprintf("Insuficientes datos para modelado (%d observaciones). Se necesitan al menos 10.", n_datos),
+        type = "error"
+      )
+      return(NULL)
+    }
 
-    rv$metrics <- metrics_list
+    # 1. Identificar variables numéricas con suficientes datos no-NA (>80%)
+    progress$set(value = 0.2, detail = "Seleccionando variables...")
+    num_vars <- names(df)[vapply(df, is.numeric, TRUE)]
+    num_vars <- setdiff(num_vars, "ME")
 
-    output$comp_table <- DT::renderDT({
-      DT::datatable(metrics_df, options = list(dom = "t", paging = FALSE)) |>
-        DT::formatRound(c("RMSE","R2_adj"), 4)
+    if (length(num_vars) == 0) {
+      shiny::showNotification("No hay variables predictoras numéricas disponibles.", type = "error")
+      return(NULL)
+    }
+
+    # Debug: Mostrar variables disponibles
+    message(sprintf("Variables numéricas disponibles: %s", paste(num_vars, collapse = ", ")))
+
+    # Filtrar variables con >80% de datos no-NA y limitar a máximo 10 para velocidad
+    vars_valid <- num_vars[sapply(num_vars, function(v) {
+      completeness <- mean(!is.na(df[[v]]))
+      message(sprintf("Variable %s: %.1f%% completa", v, completeness * 100))
+      completeness > 0.8
+    })]
+
+    message(sprintf("Variables válidas (>80%% completas): %s", paste(vars_valid, collapse = ", ")))
+
+    # Limitar a las 10 variables más correlacionadas con ME para optimizar velocidad
+    if (length(vars_valid) > 10) {
+      cor_with_me <- sapply(vars_valid, function(v) {
+        cor_val <- tryCatch(abs(cor(df[[v]], df$ME, use = "complete.obs")), error = function(e) 0)
+        message(sprintf("Correlación %s-ME: %.3f", v, cor_val))
+        cor_val
+      })
+      vars_valid <- names(sort(cor_with_me, decreasing = TRUE))[1:10]
+      message(sprintf("Variables seleccionadas (top 10 por correlación): %s", paste(vars_valid, collapse = ", ")))
+    }
+
+    if (length(vars_valid) < 2) {
+      shiny::showNotification("Insuficientes variables con datos completos (>80% no-NA).", type = "error")
+      return(NULL)
+    }
+
+    # 2. Usar solo casos completos para variables seleccionadas
+    progress$set(value = 0.3, detail = "Preparando datos...")
+    model_vars <- c("ME", vars_valid)
+    complete_cases <- complete.cases(df[, model_vars, drop = FALSE])
+    df_model <- df[complete_cases, model_vars, drop = FALSE]
+
+    if (nrow(df_model) < 10) {
+      shiny::showNotification(sprintf("Insuficientes casos completos (%d). Se necesitan al menos 10.", nrow(df_model)), type = "error")
+      return(NULL)
+    }
+
+    # 3. Proceder con stepAIC optimizado
+    progress$set(value = 0.5, detail = "Entrenando modelo...")
+    tryCatch({
+      full_form <- stats::as.formula(paste("ME ~", paste(vars_valid, collapse = " + ")))
+      full_fit  <- stats::lm(full_form, data = df_model)
+
+      # Optimizar stepAIC: usar dirección backward primero, luego both
+      progress$set(value = 0.7, detail = "Optimizando variables...")
+      auto_fit  <- MASS::stepAIC(full_fit, direction = "backward", trace = FALSE, steps = 5)
+      auto_fit  <- MASS::stepAIC(auto_fit, direction = "both", trace = FALSE, steps = 3)
+
+      modelo_auto(auto_fit)
+
+      output$auto_summary <- shiny::renderPrint({ summary(auto_fit) })
+
+      progress$set(value = 0.9, detail = "Evaluando modelo...")
+
+      # Hold-out simplificado (solo para el modelo automático)
+      set.seed(123)
+      n   <- nrow(df_model)
+      idx <- sample.int(n, size = floor(0.3*n))
+      tr  <- df_model[-idx, ]; te <- df_model[idx, ]
+
+      rmse <- function(obs, pred) sqrt(mean((obs - pred)^2))
+
+      metrics_df   <- data.frame(Modelo = character(), RMSE = numeric(), R2_adj = numeric(), stringsAsFactors = FALSE)
+      metrics_list <- list()
+
+      # Evaluar modelo automático
+      auto_fit_tr <- stats::lm(stats::formula(auto_fit), data = tr)
+      pred_auto   <- predict(auto_fit_tr, newdata = te)
+      rmse_auto <- rmse(te$ME, pred_auto)
+      r2_auto   <- summary(auto_fit_tr)$adj.r.squared
+      metrics_df <- rbind(metrics_df, data.frame(Modelo = "Automático", RMSE = rmse_auto, R2_adj = r2_auto))
+      auto_vars <- attr(terms(auto_fit), "term.labels")
+      metrics_list$auto <- list(rmse = rmse_auto, r2_adj = r2_auto, alpha = input$alpha, vars = auto_vars %||% character(0))
+
+      # Evaluar modelo manual si existe
+      if (!is.null(modelo_manual())) {
+        manual_fit_tr <- stats::lm(stats::formula(modelo_manual()), data = tr)
+        pred_man <- predict(manual_fit_tr, newdata = te)
+        rmse_man <- rmse(te$ME, pred_man)
+        r2_man   <- summary(manual_fit_tr)$adj.r.squared
+        metrics_df <- rbind(metrics_df, data.frame(Modelo = "Manual", RMSE = rmse_man, R2_adj = r2_man))
+        metrics_list$manual <- list(rmse = rmse_man, r2_adj = r2_man, alpha = input$alpha, vars = input$vars_numeric %||% character(0))
+      }
+
+      rv$metrics <- metrics_list
+
+      output$comp_table <- DT::renderDT({
+        DT::datatable(metrics_df, options = list(dom = "t", paging = FALSE)) |>
+          DT::formatRound(c("RMSE","R2_adj"), 4)
+      })
+
+      progress$set(value = 1.0, detail = "Completado")
+      shiny::showNotification(sprintf("Modelo automático creado exitosamente con %d variables y %d casos.",
+                                    length(vars_valid), nrow(df_model)), type = "message")
+
+    }, error = function(e) {
+      shiny::showNotification(paste("Error al crear modelo automático:", conditionMessage(e)), type = "error")
     })
   }, ignoreInit = TRUE)
 
@@ -299,20 +702,35 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
       tmp$rate   <- r
       tmp$amount <- monto
       tmp$term   <- plazo
-      if ("score_buro" %in% names(tmp)) tmp$score_buro <- score
-      if ("score" %in% names(tmp))      tmp$score      <- score
-      if ("cluster_id" %in% names(tmp)) tmp$cluster_id <- cluster_val
-      if ("cluster" %in% names(tmp))    tmp$cluster    <- cluster_val
+
+      # Usar score_buro si existe, sino score
+      if ("score_buro" %in% names(tmp)) {
+        tmp$score_buro <- score
+      } else if ("score" %in% names(tmp)) {
+        tmp$score <- score
+      }
+
+      # Usar cluster_id si existe, sino cluster
+      if ("cluster_id" %in% names(tmp)) {
+        tmp$cluster_id <- cluster_val
+      } else if ("cluster" %in% names(tmp)) {
+        tmp$cluster <- cluster_val
+      }
 
       # Calcular ME consistente con base_df (incluyendo ajuste directo)
       ingreso_bruto <- tmp$rate * tmp$amount * (tmp$term/12)
-      base_me <- ingreso_bruto * tmp$p_accept * (1 - tmp$p_mora)
 
-      # Ajuste directo para correlaciones
-      s_buro    <- if ("score_buro" %in% names(tmp)) scale(tmp$score_buro) else 0
-      ingreso   <- if ("ingreso_verificado" %in% names(tmp)) scale(tmp$ingreso_verificado) else 0
-      moras_prev<- if ("n_moras_previas" %in% names(tmp)) scale(tmp$n_moras_previas) else 0
-      rfm       <- if ("rfm" %in% names(tmp)) scale(tmp$rfm) else 0
+      # Usar p_accept y p_mora disponibles (sin sufijos)
+      p_accept_val <- if ("p_accept" %in% names(tmp) && !is.na(tmp$p_accept)) tmp$p_accept else 0.5
+      p_mora_val <- if ("p_mora" %in% names(tmp) && !is.na(tmp$p_mora)) tmp$p_mora else 0.1
+
+      base_me <- ingreso_bruto * p_accept_val * (1 - p_mora_val)
+
+      # Ajuste directo para correlaciones usando las columnas disponibles
+      s_buro    <- if ("score_buro" %in% names(tmp) && !is.na(tmp$score_buro)) scale(tmp$score_buro) else 0
+      ingreso   <- if ("ingreso_verificado" %in% names(tmp) && !is.na(tmp$ingreso_verificado)) scale(tmp$ingreso_verificado) else 0
+      moras_prev<- if ("n_moras_previas" %in% names(tmp) && !is.na(tmp$n_moras_previas)) scale(tmp$n_moras_previas) else 0
+      rfm       <- if ("rfm" %in% names(tmp) && !is.na(tmp$rfm)) scale(tmp$rfm) else 0
 
       me_adjustment <- 1500 * (0.5 * s_buro + 0.6 * ingreso - 0.4 * moras_prev + 0.3 * rfm)
       tmp$ME <- base_me + me_adjustment
@@ -366,6 +784,105 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
              legend = c("E = -1 (punto elástico)","E = 0"),
              lty = c(2,3), col = c("blue","gray40"))
     })
+  }, ignoreInit = TRUE)
+
+  # ----------------------------
+  # Predicción con nuevos datos
+  # ----------------------------
+  observeEvent(input$predecir, {
+    m_final <- switch(input$modelo_final,
+                      manual = modelo_manual(),
+                      automatico = modelo_auto())
+    shiny::req(m_final)
+
+    # Crear data frame con los datos del cliente
+    new_client <- data.frame(
+      score_buro = input$pred_score_buro,
+      ingreso_verificado = input$pred_ingreso,
+      n_moras_previas = input$pred_moras,
+      rfm = input$pred_rfm,
+      rate = input$pred_tasa,
+      amount = input$pred_monto,
+      term = input$pred_plazo,
+      p_accept = input$pred_p_accept,
+      p_mora = input$pred_p_mora
+    )
+
+    # Calcular ME usando la misma fórmula que en base_df
+    ingreso_bruto <- new_client$rate * new_client$amount * (new_client$term / 12)
+    base_me <- ingreso_bruto * new_client$p_accept * (1 - new_client$p_mora)
+
+    # Ajuste directo para correlaciones (usar los mismos parámetros de escala del dataset original)
+    df <- base_df()
+
+    # Calcular escalas de forma segura
+    s_buro <- if (!is.na(new_client$score_buro) && !all(is.na(df$score_buro))) {
+      (new_client$score_buro - mean(df$score_buro, na.rm = TRUE)) / sd(df$score_buro, na.rm = TRUE)
+    } else { 0 }
+
+    ingreso <- if (!is.na(new_client$ingreso_verificado) && !all(is.na(df$ingreso_verificado))) {
+      (new_client$ingreso_verificado - mean(df$ingreso_verificado, na.rm = TRUE)) / sd(df$ingreso_verificado, na.rm = TRUE)
+    } else { 0 }
+
+    moras_prev <- if (!is.na(new_client$n_moras_previas) && !all(is.na(df$n_moras_previas))) {
+      (new_client$n_moras_previas - mean(df$n_moras_previas, na.rm = TRUE)) / sd(df$n_moras_previas, na.rm = TRUE)
+    } else { 0 }
+
+    rfm_val <- if (!is.na(new_client$rfm) && !all(is.na(df$rfm))) {
+      (new_client$rfm - mean(df$rfm, na.rm = TRUE)) / sd(df$rfm, na.rm = TRUE)
+    } else { 0 }
+
+    me_adjustment <- 1500 * (0.5 * s_buro + 0.6 * ingreso - 0.4 * moras_prev + 0.3 * rfm_val)
+    new_client$ME <- base_me + me_adjustment
+
+    # Predicción usando el modelo
+    pred_me <- predict(m_final, newdata = new_client)
+
+    output$pred_result <- shiny::renderPrint({
+      cat("Datos del cliente:\n")
+      cat(sprintf("Score buro: %.0f\n", new_client$score_buro))
+      cat(sprintf("Ingreso verificado: %.0f\n", new_client$ingreso_verificado))
+      cat(sprintf("N° moras previas: %.0f\n", new_client$n_moras_previas))
+      cat(sprintf("RFM: %.0f\n", new_client$rfm))
+      cat(sprintf("Tasa ofrecida: %.3f\n", new_client$rate))
+      cat(sprintf("Monto: %.0f\n", new_client$amount))
+      cat(sprintf("Plazo: %.0f meses\n", new_client$term))
+      cat(sprintf("P(aceptar): %.2f\n", new_client$p_accept))
+      cat(sprintf("P(mora): %.2f\n", new_client$p_mora))
+      cat("\n")
+      cat(sprintf("ME calculado: %.2f\n", new_client$ME))
+      cat(sprintf("ME predicho por modelo: %.2f\n", pred_me))
+      cat(sprintf("Diferencia: %.2f\n", pred_me - new_client$ME))
+    })
+
+    # Calcular elasticidades
+    coefs <- stats::coef(m_final)
+    elasticidades <- data.frame(
+      Variable = character(),
+      Elasticidad = numeric(),
+      stringsAsFactors = FALSE
+    )
+
+    # Elasticidad para cada variable numérica disponible en el modelo
+    vars_in_model <- names(coefs)
+    for (var in c("score_buro", "ingreso_verificado", "n_moras_previas", "rfm", "rate", "amount", "term")) {
+      if (var %in% vars_in_model && var %in% names(new_client) && !is.na(new_client[[var]])) {
+        coef_val <- coefs[var]
+        val_var <- new_client[[var]]
+        val_me <- pred_me
+        elast <- (coef_val * val_var) / val_me
+        elasticidades <- rbind(elasticidades, data.frame(
+          Variable = var,
+          Elasticidad = elast
+        ))
+      }
+    }
+
+    output$elasticidades <- DT::renderDT({
+      DT::datatable(elasticidades, options = list(dom = "t", paging = FALSE)) |>
+        DT::formatRound("Elasticidad", 4)
+    })
+
   }, ignoreInit = TRUE)
 
   # ----------------------------

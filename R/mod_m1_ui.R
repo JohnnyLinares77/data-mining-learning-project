@@ -188,9 +188,30 @@ mod_m1_ui <- function(id){
           tabPanel(
             title = "Clusters",
             br(),
-            plotOutput(ns("plot_clusters"), height = 280),
+            # Gráfico de clusters arriba
+            plotOutput(ns("plot_clusters")),
+            br(),
+
+            # Tabla de métricas debajo del gráfico
+            h5("Métricas del Clustering"),
             DT::DTOutput(ns("tabla_metricas")),
+            br(),
+
+            # Feedback debajo de la tabla
             uiOutput(ns("feedback")),
+
+            tags$hr(),
+            h4("Selección Automática de Cluster Óptimo"),
+            p("La computadora puede seleccionar automáticamente el cluster con mayor potencial comercial basado en métricas como score crediticio promedio, ingreso promedio y potencial de margen esperado."),
+
+            actionButton(ns("auto_select_cluster"), "Seleccionar Cluster Óptimo Automáticamente",
+                        class = "btn-warning"),
+            br(), br(),
+
+            # Resultado de selección automática
+            uiOutput(ns("auto_cluster_result")),
+            DT::DTOutput(ns("cluster_potential_table")),
+
             br(),
             actionButton(ns("confirmar"), "Confirmar decisión"),
             actionButton(ns("reiniciar"), "Reiniciar Módulo 1", style = "margin-left:6px;"),

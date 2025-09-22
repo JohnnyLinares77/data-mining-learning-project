@@ -1,4 +1,4 @@
-# app.R (integrado con Módulo 3 - Pricing y Elasticidad)
+
 # ---- Dependencias
 library(shiny)
 library(DT)
@@ -8,6 +8,7 @@ library(shinyjs)
 library(ggplot2)  # para gráficos en M3
 library(reshape2) # para melt() en heatmaps de correlación
 library(MASS)     # para stepAIC en M3
+library(car)      # para VIF en análisis de multicolinealidad
 
 # ---- Sourcing: Módulo 1
 source("R/gen_datos.R")
@@ -55,7 +56,7 @@ server <- function(input, output, session){
   # 1) Inicializamos simulación (se comparte entre M1, M2 y M3)
   id_sim     <- paste0("SIM_", format(Sys.time(), "%Y%m%d_%H%M%S"))
   seed       <- 12345L
-  n_clientes <- 1000L
+  n_clientes <- 5000L  # Aumentado para mejor performance y más datos después del filtrado
 
   # 2) Generación de datos (lista de data.frames) — base común
   #    gen_datos() devuelve: demograficas, financieras, comp_historico,
@@ -81,60 +82,41 @@ server <- function(input, output, session){
   )
 
   # 5) Preparación del dataset para el Módulo 3 (Pricing)
-  #    - Integra datos de cliente (M1) + probabilidades (M2)
-  #    - Asegura la presencia de columnas de oferta: rate, amount, term
+  #    - Integra datos de cliente (M1) + probabilidades (M2) + ofertas históricas
+  #    - Usa ofertas_historicas para datos de entrenamiento realistas
   datos_para_m3 <- reactive({
     # Base de cliente (un flat por id_cliente)
     base_cli <- Reduce(function(x, y) merge(x, y, by = "id_cliente", all = TRUE),
-                       list(datos$demograficas, datos$financieras, datos$comp_historico))
+                      list(datos$demograficas, datos$financieras, datos$comp_historico))
 
-    # Traer probabilidades de M2 si ya fueron calculadas
+    # Agregar ofertas históricas si existen (para datos de entrenamiento realistas)
+    if (!is.null(datos$ofertas_historicas) && nrow(datos$ofertas_historicas) > 0) {
+      # Merge con ofertas históricas - cada cliente tendrá múltiples filas (una por oferta histórica)
+      base_cli <- merge(base_cli, datos$ofertas_historicas, by = "id_cliente", all.y = TRUE)
+    }
+
+    # Traer probabilidades de M2 si ya fueron calculadas (solo score, no p_accept/p_mora)
     if (!is.null(session$userData$df_scores)) {
-      base_cli <- merge(base_cli, session$userData$df_scores, by = "id_cliente", all.x = TRUE)
+      # Solo incluir score y cluster_id, excluir p_accept y p_mora para evitar multicolinealidad
+      scores_filtered <- session$userData$df_scores[, c("id_cliente", "score"), drop = FALSE]
+      base_cli <- merge(base_cli, scores_filtered, by = "id_cliente", all.x = TRUE)
     } else {
-      # Si aún no hay df_scores, crea columnas vacías para que la UI de M3 avise al alumno
-      base_cli$p_accept <- NA_real_
-      base_cli$p_mora   <- NA_real_
-      base_cli$score    <- NA_real_
+      # Si aún no hay df_scores, crea columna score vacía
+      base_cli$score <- NA_real_
     }
 
-    # Incorporar parámetros de oferta desde simulacion_meta si existen
-    # (ajusta los nombres según tu gen_datos)
-    if (!is.null(datos$simulacion_meta)) {
-      meta <- datos$simulacion_meta
-      # intenta detectar columnas típicas
-      posibles_nombres <- list(
-        rate   = c("rate", "tasa", "tasa_ofrecida", "interes"),
-        amount = c("amount", "monto", "monto_ofrecido"),
-        term   = c("term", "plazo", "meses")
-      )
-      pick_col <- function(df, opciones) {
-        nm <- opciones[opciones %in% names(df)]
-        if (length(nm) >= 1) df[[nm[1]]] else NULL
-      }
-      meta_rate   <- pick_col(meta, posibles_nombres$rate)
-      meta_amount <- pick_col(meta, posibles_nombres$amount)
-      meta_term   <- pick_col(meta, posibles_nombres$term)
-
-      # Unir por id_cliente si existe, si no, reciclar valores típicos
-      if ("id_cliente" %in% names(meta)) {
-        fuse <- data.frame(id_cliente = meta$id_cliente,
-                           rate   = if (is.null(meta_rate))   NA_real_ else meta_rate,
-                           amount = if (is.null(meta_amount)) NA_real_ else meta_amount,
-                           term   = if (is.null(meta_term))   NA_real_ else meta_term)
-        base_cli <- merge(base_cli, fuse, by = "id_cliente", all.x = TRUE)
-      } else {
-        # relleno por defecto si no hay id_cliente en meta
-        if (!"rate"   %in% names(base_cli)) base_cli$rate   <- if (is.null(meta_rate))   0.40 else meta_rate[1]
-        if (!"amount" %in% names(base_cli)) base_cli$amount <- if (is.null(meta_amount)) 5000 else meta_amount[1]
-        if (!"term"   %in% names(base_cli)) base_cli$term   <- if (is.null(meta_term))   12    else meta_term[1]
-      }
+    # Traer clusters de M1 si existen
+    if (!is.null(session$userData$clusters)) {
+      clusters_filtered <- session$userData$clusters[, c("id_cliente", "cluster_id"), drop = FALSE]
+      base_cli <- merge(base_cli, clusters_filtered, by = "id_cliente", all.x = TRUE)
     } else {
-      # Fallback si no existe simulacion_meta
-      if (!"rate"   %in% names(base_cli)) base_cli$rate   <- 0.40
-      if (!"amount" %in% names(base_cli)) base_cli$amount <- 5000
-      if (!"term"   %in% names(base_cli)) base_cli$term   <- 12
+      base_cli$cluster_id <- NA_character_
     }
+
+    # Si no hay ofertas_historicas, generar valores por defecto para compatibilidad
+    if (!"rate" %in% names(base_cli)) base_cli$rate <- 0.05
+    if (!"amount" %in% names(base_cli)) base_cli$amount <- 5000
+    if (!"term" %in% names(base_cli)) base_cli$term <- 12
 
     base_cli
   })

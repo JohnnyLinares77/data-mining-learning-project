@@ -6,6 +6,16 @@ mod_m1_server <- function(input, output, session, datos_reactivos, id_sim){
 
   ns <- session$ns
 
+  # Helper function similar to M3's .get_base_df
+  .get_base_df_m1 <- function(d){
+    if (is.data.frame(d)) return(d)
+    if (!is.null(d$base)) return(d$base)
+    keys <- c("demograficas","financieras","comp_historico","clientes","post_desembolso","ofertas_historicas")
+    tabs <- tryCatch(Filter(Negate(is.null), d[keys]), error = function(e) list())
+    if (length(tabs) == 0) stop("No se encontraron tablas base en datos_reactivos().")
+    Reduce(function(a,b) merge(a,b, by = "id_cliente", all = TRUE), tabs)
+  }
+
   # -------------------------
   # Estado reactivo del módulo
   # -------------------------
@@ -23,7 +33,11 @@ mod_m1_server <- function(input, output, session, datos_reactivos, id_sim){
     inertia = NA_real_,
 
     # Evaluación de rango de K
-    kgrid = NULL
+    kgrid = NULL,
+
+    # Selección automática
+    auto_selected_cluster = NULL,  # ID del cluster seleccionado automáticamente
+    cluster_potential = NULL       # DataFrame con métricas de potencial por cluster
   )
 
   # ----------------------------------------------------------
@@ -114,6 +128,9 @@ mod_m1_server <- function(input, output, session, datos_reactivos, id_sim){
 
   # Biplot con scores y loadings
   output$plot_pca <- renderPlot({
+    # Reset gráfico parameters para evitar interferencia con otros plots
+    par(mfrow = c(1,1), mar = c(5, 4, 4, 2) + 0.1, oma = c(0, 0, 0, 0))
+
     sc <- rv$scores
     if(is.null(sc)) return(invisible(NULL))
 
@@ -128,11 +145,14 @@ mod_m1_server <- function(input, output, session, datos_reactivos, id_sim){
           pch = 19, cex = 0.6, col = "gray30")
       abline(h = 0, v = 0, lty = 3)
 
-      # Dibujar vectores de carga (loadings)
+      # Dibujar vectores de carga (loadings) - mejorados para visibilidad
       loadings <- rv$pc$rotation[,1:2]
-      arrows(0, 0, loadings[,1]*2, loadings[,2]*2, col = "red", length = 0.1, lwd = 0.2)
-      text(loadings[,1]*2.2, loadings[,2]*2.2, labels = rownames(loadings),
-          col = "red", cex = 0.7)
+      # Escalar loadings para mejor visibilidad
+      scale_factor <- 1.5
+      arrows(0, 0, loadings[,1]*scale_factor, loadings[,2]*scale_factor,
+             col = "red", length = 0.15, lwd = 2, angle = 20)
+      text(loadings[,1]*(scale_factor + 0.3), loadings[,2]*(scale_factor + 0.3),
+           labels = rownames(loadings), col = "red", cex = 0.9, font = 2)
 
     } else {
       plot(sc[,1], rep(0, nrow(sc)),
@@ -142,7 +162,7 @@ mod_m1_server <- function(input, output, session, datos_reactivos, id_sim){
           pch = 19, cex = 0.6, col = "gray30")
       abline(h = 0, lty = 3)
     }
-  }, height = 500, width = 500)
+  }, height = 350, width = 550)  # Mismas dimensiones que el gráfico de clusters
 
     showNotification(paste0("PCA preparado con ", rv$ncomp, " componentes para clustering."), type = "message")
     updateTabsetPanel(session, inputId = "tabs", selected = "PCA")
@@ -215,24 +235,27 @@ mod_m1_server <- function(input, output, session, datos_reactivos, id_sim){
 
     # Scatter de clusters
     output$plot_clusters <- renderPlot({
+      # Reset gráfico parameters para evitar interferencia con otros plots
+      par(mfrow = c(1,1), mar = c(5, 4, 4, 2) + 0.1, oma = c(0, 0, 0, 0))
+
       sc  <- rv$scores
       cls <- factor(rv$clusters)
       if(is.null(sc) || is.null(cls)) return(invisible(NULL))
 
       if(ncol(sc) >= 2){
         plot(sc[,1], sc[,2],
-             col = cls, pch = 19, cex = 0.7,
-             xlab = "PC1", ylab = "PC2",
-             main = paste("Clusters (K =", input$k, ") —", rv$ncomp, "comp."))
+              col = cls, pch = 19, cex = 0.7,
+              xlab = "PC1", ylab = "PC2",
+              main = paste("Clusters (K =", input$k, ") —", rv$ncomp, "comp."))
         legend("topright", legend = levels(cls),
-               col = seq_along(levels(cls)), pch = 19, title = "Cluster")
+                col = seq_along(levels(cls)), pch = 19, title = "Cluster")
       } else {
         plot(sc[,1], rep(0, nrow(sc)),
-             col = cls, pch = 19, cex = 0.7,
-             xlab = "PC1", ylab = "",
-             main = paste("Clusters (K =", input$k, ") —", rv$ncomp, "comp."))
+              col = cls, pch = 19, cex = 0.7,
+              xlab = "PC1", ylab = "",
+              main = paste("Clusters (K =", input$k, ") —", rv$ncomp, "comp."))
       }
-    })
+    }, height = 350, width = 550)  # Rectangular para mejor presentación
 
     # Tabla de métricas
     output$tabla_metricas <- DT::renderDT({
@@ -259,6 +282,167 @@ mod_m1_server <- function(input, output, session, datos_reactivos, id_sim){
   })
 
   # -------------------------
+  # Selección automática de cluster óptimo
+  # -------------------------
+  observeEvent(input$auto_select_cluster, {
+    req(rv$clusters)
+
+    # Obtener datos originales para calcular métricas de potencial
+    datos <- datos_reactivos()
+    df <- .get_base_df_m1(datos)
+
+    # Ensure id_cliente is character (consistent with M3)
+    df$id_cliente <- as.character(df$id_cliente)
+
+    # Agregar clusters a los datos
+    df$cluster_id <- rv$clusters
+
+    # VALIDACIÓN: Verificar que hay datos suficientes
+    if (nrow(df) == 0) {
+      shiny::showNotification("No hay datos disponibles para calcular potencial de clusters.", type = "error")
+      return(NULL)
+    }
+
+    if (length(unique(rv$clusters)) < 2) {
+      shiny::showNotification("Se necesita al menos 2 clusters para selección automática.", type = "warning")
+      return(NULL)
+    }
+
+    # Calcular métricas de potencial por cluster
+    cluster_metrics <- data.frame()
+
+    for (cluster_id in unique(rv$clusters)) {
+      cluster_data <- df[df$cluster_id == cluster_id, ]
+
+      # VALIDACIÓN: Cluster no vacío
+      if (nrow(cluster_data) == 0) {
+        shiny::showNotification(sprintf("Cluster %s está vacío, omitiendo.", cluster_id), type = "warning")
+        next
+      }
+
+      # Métricas básicas con validación
+      n_clientes <- nrow(cluster_data)
+
+      # Calcular promedios de forma segura
+      score_promedio <- if ("score_buro" %in% names(cluster_data) &&
+                           any(!is.na(cluster_data$score_buro))) {
+        mean(cluster_data$score_buro, na.rm = TRUE)
+      } else { 600 }  # Valor por defecto razonable
+
+      ingreso_promedio <- if ("ingreso_verificado" %in% names(cluster_data) &&
+                             any(!is.na(cluster_data$ingreso_verificado))) {
+        mean(cluster_data$ingreso_verificado, na.rm = TRUE)
+      } else { 3000 }  # Valor por defecto
+
+      rfm_promedio <- if ("rfm" %in% names(cluster_data) &&
+                         any(!is.na(cluster_data$rfm))) {
+        mean(cluster_data$rfm, na.rm = TRUE)
+      } else { 3 }  # Valor por defecto
+
+      # Potencial de ME (si hay datos de M2 disponibles)
+      me_potencial <- NA_real_
+      if (!is.null(session$userData$scores)) {
+        # Unir con scores de M2
+        cluster_scores <- merge(cluster_data, session$userData$scores,
+                               by = "id_cliente", all.x = TRUE)
+        if ("score" %in% names(cluster_scores) &&
+            any(!is.na(cluster_scores$score))) {
+          # Estimar ME potencial usando score como proxy
+          me_potencial <- mean(cluster_scores$score, na.rm = TRUE) * 1000  # Score * factor arbitrario
+        }
+      }
+
+      # VALIDACIÓN: Evitar valores NaN o Inf
+      if (is.na(score_promedio) || is.nan(score_promedio) || is.infinite(score_promedio)) {
+        score_promedio <- 600
+      }
+      if (is.na(ingreso_promedio) || is.nan(ingreso_promedio) || is.infinite(ingreso_promedio)) {
+        ingreso_promedio <- 3000
+      }
+      if (is.na(rfm_promedio) || is.nan(rfm_promedio) || is.infinite(rfm_promedio)) {
+        rfm_promedio <- 3
+      }
+
+      # Calcular score compuesto de potencial (0-100)
+      # Normalizar métricas y combinar
+      score_norm <- (score_promedio - 300) / (950 - 300)  # Normalizar score_buro
+      ingreso_norm <- pmin(ingreso_promedio / 10000, 1)   # Capear ingreso alto
+      rfm_norm <- rfm_promedio / 100                       # RFM ya está en 0-100
+
+      # VALIDACIÓN: Asegurar valores en rango [0,1]
+      score_norm <- pmax(0, pmin(1, score_norm))
+      ingreso_norm <- pmax(0, pmin(1, ingreso_norm))
+      rfm_norm <- pmax(0, pmin(1, rfm_norm))
+
+      # Peso: 40% score, 30% ingreso, 20% RFM, 10% tamaño cluster
+      size_weight <- min(n_clientes / 500, 1)  # Bonus por tamaño (máx 500 clientes)
+      potencial_score <- (0.4 * score_norm + 0.3 * ingreso_norm +
+                         0.2 * rfm_norm + 0.1 * size_weight) * 100
+
+      # VALIDACIÓN: Score final en rango válido
+      potencial_score <- pmax(0, pmin(100, potencial_score))
+
+      cluster_metrics <- rbind(cluster_metrics, data.frame(
+        cluster_id = cluster_id,
+        n_clientes = n_clientes,
+        score_buro_promedio = round(score_promedio, 1),
+        ingreso_promedio = round(ingreso_promedio, 0),
+        rfm_promedio = round(rfm_promedio, 1),
+        me_potencial = if (!is.na(me_potencial) && is.finite(me_potencial))
+                       round(me_potencial, 0) else NA_real_,
+        potencial_score = round(potencial_score, 1)
+      ))
+    }
+
+    # VALIDACIÓN: Verificar que hay al menos un cluster válido
+    if (nrow(cluster_metrics) == 0) {
+      shiny::showNotification("No se pudieron calcular métricas para ningún cluster.", type = "error")
+      return(NULL)
+    }
+
+    # Seleccionar cluster con mayor potencial
+    best_cluster <- cluster_metrics[which.max(cluster_metrics$potencial_score), ]
+
+    # Guardar en estado reactivo
+    rv$auto_selected_cluster <- best_cluster$cluster_id
+    rv$cluster_potential <- cluster_metrics
+
+    # Mostrar resultado
+    output$auto_cluster_result <- renderUI({
+      div(
+        class = "alert alert-success",
+        h4("¡Cluster Óptimo Seleccionado!"),
+        p(sprintf("La computadora ha seleccionado el Cluster %d como el más prometedor.", best_cluster$cluster_id)),
+        p(sprintf("Este cluster tiene %d clientes con un score de potencial de %.1f/100.",
+                 best_cluster$n_clientes, best_cluster$potencial_score)),
+        p("El cluster seleccionado tiene el mejor balance entre score crediticio, capacidad de pago y comportamiento histórico.")
+      )
+    })
+
+    # Mostrar tabla de comparación
+    output$cluster_potential_table <- DT::renderDT({
+      DT::datatable(
+        cluster_metrics[order(cluster_metrics$potencial_score, decreasing = TRUE), ],
+        colnames = c("Cluster", "N° Clientes", "Score Buró Promedio",
+                    "Ingreso Promedio", "RFM Promedio", "ME Potencial", "Score Potencial"),
+        options = list(dom = "t", paging = FALSE)
+      ) |>
+        DT::formatStyle("potencial_score",
+                       backgroundColor = DT::styleInterval(
+                         c(70, 85),
+                         c("lightcoral", "lightyellow", "lightgreen")
+                       ))
+    })
+
+    # Actualizar input de K para reflejar la selección automática
+    updateNumericInput(session, "k", value = best_cluster$cluster_id)
+
+    showNotification(sprintf("Cluster %d seleccionado automáticamente como óptimo (potencial: %.1f/100)",
+                           best_cluster$cluster_id, best_cluster$potencial_score),
+                    type = "message", duration = 8)
+  })
+
+  # -------------------------
   # Confirmar decisión (persistencia)
   # -------------------------
   observeEvent(input$confirmar, {
@@ -276,7 +460,11 @@ mod_m1_server <- function(input, output, session, datos_reactivos, id_sim){
       criterio_k     = "mixto"
     )
 
-    id_cliente <- as.character(seq_len(nrow(rv$scores)))
+    # Usar IDs reales de los datos originales en lugar de IDs secuenciales
+    datos <- datos_reactivos()
+    df_base <- .get_base_df_m1(datos)
+    df_base$id_cliente <- as.character(df_base$id_cliente)
+    id_cliente <- df_base$id_cliente
     success <- persist_clientes_clusters(
       id_sim     = id_sim,
       id_cliente = id_cliente,
@@ -284,13 +472,46 @@ mod_m1_server <- function(input, output, session, datos_reactivos, id_sim){
     )
 
     if (success) {
-      # Store clusters in session for M2/M3
-      session$userData$clusters <- data.frame(id_cliente = id_cliente, cluster_id = as.integer(rv$clusters))
-      showNotification("Clusters guardados en data/clientes_clusters.csv. Módulo 1 completado.", type = "message")
+      # FILTRADO DE EMBUDO: Si hay cluster seleccionado automáticamente, filtrar solo ese cluster
+      if (!is.null(rv$auto_selected_cluster)) {
+        selected_cluster <- rv$auto_selected_cluster
+        cluster_filter <- rv$clusters == selected_cluster
+        filtered_id_cliente <- id_cliente[cluster_filter]
+        filtered_clusters <- rv$clusters[cluster_filter]
+
+        # Store filtered clusters in session for M2/M3
+        session$userData$clusters <- data.frame(
+          id_cliente = filtered_id_cliente,
+          cluster_id = as.integer(rep(selected_cluster, length(filtered_id_cliente)))
+        )
+
+        n_total <- length(id_cliente)
+        n_filtrados <- length(filtered_id_cliente)
+        pct_filtrados <- round(100 * n_filtrados / n_total, 1)
+
+        showNotification(
+          sprintf("Cluster %d seleccionado automáticamente. Filtrados %d/%d clientes (%.1f%%). Módulo 1 completado.",
+                  selected_cluster, n_filtrados, n_total, pct_filtrados),
+          type = "message", duration = 6
+        )
+      } else {
+        # No hay filtrado automático, guardar todos los clusters
+        session$userData$clusters <- data.frame(id_cliente = id_cliente, cluster_id = as.integer(rv$clusters))
+        showNotification("Clusters guardados en data/clientes_clusters.csv. Módulo 1 completado.", type = "message")
+      }
     } else {
       showNotification("Error guardando clusters en CSV, pero datos disponibles en sesión.", type = "warning")
-      # Still store in session as fallback
-      session$userData$clusters <- data.frame(id_cliente = id_cliente, cluster_id = as.integer(rv$clusters))
+      # Still store in session as fallback (con filtrado si aplica)
+      if (!is.null(rv$auto_selected_cluster)) {
+        selected_cluster <- rv$auto_selected_cluster
+        cluster_filter <- rv$clusters == selected_cluster
+        session$userData$clusters <- data.frame(
+          id_cliente = id_cliente[cluster_filter],
+          cluster_id = as.integer(rep(selected_cluster, sum(cluster_filter)))
+        )
+      } else {
+        session$userData$clusters <- data.frame(id_cliente = id_cliente, cluster_id = as.integer(rv$clusters))
+      }
     }
   })
 
@@ -302,6 +523,8 @@ mod_m1_server <- function(input, output, session, datos_reactivos, id_sim){
     rv$ncomp <- NULL
     rv$clusters <- NULL
     rv$silueta <- rv$wss <- rv$inertia <- NA_real_
+    rv$auto_selected_cluster <- NULL
+    rv$cluster_potential <- NULL
 
     output$plot_pca        <- renderPlot({})
     output$plot_varianza   <- renderPlot({})
@@ -310,6 +533,8 @@ mod_m1_server <- function(input, output, session, datos_reactivos, id_sim){
     output$plot_clusters   <- renderPlot({})
     output$tabla_metricas  <- DT::renderDT(NULL)
     output$feedback        <- renderUI(NULL)
+    output$auto_cluster_result <- renderUI(NULL)
+    output$cluster_potential_table <- DT::renderDT(NULL)
 
     showNotification("Módulo 1 reiniciado.", type = "message")
     updateTabsetPanel(session, inputId = "tabs", selected = "PCA")

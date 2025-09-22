@@ -19,7 +19,7 @@ mod_m2_ui <- function(id){
             "capacidad_endeudamiento","endeudamiento_total","rfm","score_buro","tendencia_ingresos",
             "cluster_id"
           ),
-          selected = c("edad","ingreso_verificado","rfm","score_buro","cluster_id")
+          selected = c("edad","ingreso_verificado","rfm","score_buro")
         )
       ),
       shiny::column(
@@ -310,7 +310,7 @@ mod_m2_ui <- function(id){
             DT::DTOutput(ns("tbl_thr_metrics"))
           ),
 
-          # ---- Tab 5: Resultados (igual)
+          # ---- Tab 5: Resultados
           shiny::tabPanel(
             title = "Resultados",
             shiny::br(),
