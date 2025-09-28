@@ -339,17 +339,12 @@ mod_m1_server <- function(input, output, session, datos_reactivos, id_sim){
         mean(cluster_data$rfm, na.rm = TRUE)
       } else { 3 }  # Valor por defecto
 
-      # Potencial de ME (si hay datos de M2 disponibles)
-      me_potencial <- NA_real_
-      if (!is.null(session$userData$scores)) {
-        # Unir con scores de M2
-        cluster_scores <- merge(cluster_data, session$userData$scores,
-                               by = "id_cliente", all.x = TRUE)
-        if ("score" %in% names(cluster_scores) &&
-            any(!is.na(cluster_scores$score))) {
-          # Estimar ME potencial usando score como proxy
-          me_potencial <- mean(cluster_scores$score, na.rm = TRUE) * 1000  # Score * factor arbitrario
-        }
+      # Margen Esperado simulado (basado en datos generados)
+      me_potencial <- if ("margen_esperado" %in% names(cluster_data) &&
+                         any(!is.na(cluster_data$margen_esperado))) {
+        mean(cluster_data$margen_esperado, na.rm = TRUE)
+      } else {
+        NA_real_
       }
 
       # VALIDACIÓN: Evitar valores NaN o Inf
@@ -388,8 +383,7 @@ mod_m1_server <- function(input, output, session, datos_reactivos, id_sim){
         score_buro_promedio = round(score_promedio, 1),
         ingreso_promedio = round(ingreso_promedio, 0),
         rfm_promedio = round(rfm_promedio, 1),
-        me_potencial = if (!is.na(me_potencial) && is.finite(me_potencial))
-                       round(me_potencial, 0) else NA_real_,
+        me_potencial = round(me_potencial, 2),
         potencial_score = round(potencial_score, 1)
       ))
     }
@@ -424,7 +418,7 @@ mod_m1_server <- function(input, output, session, datos_reactivos, id_sim){
       DT::datatable(
         cluster_metrics[order(cluster_metrics$potencial_score, decreasing = TRUE), ],
         colnames = c("Cluster", "N° Clientes", "Score Buró Promedio",
-                    "Ingreso Promedio", "RFM Promedio", "ME Potencial", "Score Potencial"),
+                    "Ingreso Promedio", "RFM Promedio", "Margen Esperado", "Score Potencial"),
         options = list(dom = "t", paging = FALSE)
       ) |>
         DT::formatStyle("potencial_score",

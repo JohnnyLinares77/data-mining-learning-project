@@ -56,6 +56,17 @@ gen_datos <- function(n_clientes = 1000L, seed = 123L){
     stringsAsFactors     = FALSE
   )
 
+  # Simular Margen Esperado (ME) basado en score, ingreso y riesgo, con mayor variabilidad
+  financieras$margen_esperado <- with(financieras, {
+    # Unir con moras para riesgo
+    moras <- comp_historico$n_moras_previas[match(id_cliente, comp_historico$id_cliente)]
+    rfm <- comp_historico$rfm[match(id_cliente, comp_historico$id_cliente)]
+    risk_factor <- 1 - (moras / 5) * 0.5  # Penalizar moras
+    potential_factor <- rfm / 100  # Bonificar RFM alto
+    base_me <- (score_buro / 100) * (ingreso_verificado / 100) * 100 * risk_factor * potential_factor
+    pmax(0, base_me)  # asegurar positivo
+  })
+
   # --- POST DESEMBOLSO (para consistencia; no se usa en M1)
   post_desembolso <- data.frame(
     id_cliente          = 1:n_clientes,

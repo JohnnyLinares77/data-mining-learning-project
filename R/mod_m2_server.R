@@ -156,26 +156,21 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
 
       base <- get_base_df(d)
 
-      # Merge cluster_id from M1 if available
-      cluster_file <- file.path("data", "clientes_clusters.csv")
-      if (file.exists(cluster_file)) {
-        clusters <- read.csv(cluster_file, stringsAsFactors = FALSE)
-        base <- merge(base, clusters[, c("id_cliente", "cluster_id")], by = "id_cliente", all.x = TRUE)
+      # FILTRADO DE EMBUDO: Usar datos filtrados de M1 desde session$userData$clusters
+      if (!is.null(session$userData$clusters) && nrow(session$userData$clusters) > 0) {
+        n_original <- nrow(base)
+        base <- base[base$id_cliente %in% session$userData$clusters$id_cliente, ]
+        n_filtrados <- nrow(base)
 
-        # FILTRADO DE EMBUDO: Si hay datos de clusters filtrados, usar SOLO esos clientes
-        if (!is.null(base$cluster_id) && any(!is.na(base$cluster_id))) {
-          clientes_con_cluster <- base[!is.na(base$cluster_id), ]
-          n_original <- nrow(base)
-          n_filtrados <- nrow(clientes_con_cluster)
+        if (n_filtrados > 0) {
+          shiny::showNotification(
+            sprintf("Filtrado por cluster M1: %d/%d clientes retenidos (%.1f%%)",
+                    n_filtrados, n_original, 100 * n_filtrados / n_original),
+            type = "message", duration = 5
+          )
 
-          if (n_filtrados > 0) {
-            base <- clientes_con_cluster
-            shiny::showNotification(
-              sprintf("Filtrado por cluster M1: %d/%d clientes retenidos (%.1f%%)",
-                      n_filtrados, n_original, 100 * n_filtrados / n_original),
-              type = "message", duration = 5
-            )
-          }
+          # Agregar cluster_id para consistencia
+          base <- merge(base, session$userData$clusters[, c("id_cliente", "cluster_id")], by = "id_cliente", all.x = TRUE)
 
           # Si todos los clientes tienen el mismo cluster_id (filtrado automático), removerlo de variables disponibles
           if (length(unique(base$cluster_id)) == 1) {
@@ -185,7 +180,16 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
               type = "message", duration = 5
             )
           }
+        } else {
+          shiny::showNotification("No hay clientes coincidentes con los clusters de M1.", type = "error")
+          return(NULL)
         }
+      } else {
+        shiny::showNotification(
+          "No hay datos de clusters del Módulo 1. Complete el Módulo 1 primero.",
+          type = "warning"
+        )
+        return(NULL)
       }
 
       rv$base <- base
