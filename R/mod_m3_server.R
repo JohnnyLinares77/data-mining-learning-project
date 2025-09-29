@@ -17,6 +17,29 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
     cor_data = NULL     # datos procesados para correlaciones (df, vars_valid, vars_in_cor)
   )
 
+  # ============================
+  # HELPER: interpretación automática para M3 (regresión lineal)
+  # ============================
+  .build_interpretacion_var_m3 <- function(model, var, alpha = 0.05){
+    s <- summary(model)
+    coefs <- s$coefficients
+    if (!(var %in% rownames(coefs))) {
+      return(list(texto = sprintf("No se encontró coeficiente para '%s'.", var), ok = FALSE))
+    }
+
+    beta <- coefs[var, "Estimate"]
+    pv <- coefs[var, "Pr(>|t|)"]
+    dir <- if (beta >= 0) "aumenta" else "disminuye"
+    sig <- if (is.finite(pv) && pv < alpha) "es significativa" else "no es significativa"
+
+    texto <- sprintf(
+      "El coeficiente de '%s' es %.4f (p = %.4f) y %s: un aumento de 1 unidad en '%s' %s ME en %.4f unidades.",
+      var, beta, pv, sig, var, dir, beta
+    )
+
+    list(texto = texto, ok = is.finite(pv))
+  }
+
   # ----------------------------
   # Actualizar variables disponibles cuando cambien los datos
   # ----------------------------
@@ -339,6 +362,11 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
       df_cor = df_cor
     )
 
+    # Actualizar choices para selección de variables
+    shiny::updateCheckboxGroupInput(session, "selected_vars",
+                                    choices = vars_in_cor,
+                                    selected = character(0))
+
     # Validar que hay correlaciones válidas
     if (any(is.na(cor_with_me))) {
       shiny::showNotification("No se pudieron calcular algunas correlaciones (datos faltantes).", type = "warning")
@@ -410,13 +438,24 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
   }, ignoreInit = TRUE)
 
   # ----------------------------
+  # Confirmar selección de variables
+  # ----------------------------
+  observeEvent(input$confirmar_seleccion, {
+    selected <- input$selected_vars
+    shiny::validate(shiny::need(length(selected) >= 1, "Selecciona al menos una variable."))
+    rv$selected_vars <- selected
+    shiny::showNotification(sprintf("Variables seleccionadas: %s", paste(selected, collapse = ", ")), type = "message")
+    shiny::updateTabsetPanel(session, "tabs", selected = "Análisis Modelo Regresión Lineal")
+  })
+
+  # ----------------------------
   # Modelo lineal (manual)
   # ----------------------------
   modelo_manual <- shiny::reactiveVal(NULL)
 
   observeEvent(input$ajustar_modelo, {
     df   <- base_df()
-    vars <- input$vars_numeric
+    vars <- rv$selected_vars %||% input$vars_numeric
     shiny::validate(shiny::need(length(vars) >= 1, "Selecciona variables para el modelo."))
 
     # Debug: Check data validity
@@ -485,6 +524,45 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
   }, ignoreInit = TRUE)
 
   # ----------------------------
+  # Validar significancia del modelo
+  # ----------------------------
+  observeEvent(input$validar_significancia, {
+    fit <- modelo_manual()
+    shiny::req(fit)
+
+    summ <- summary(fit)
+    p_f <- pf(summ$fstatistic[1], summ$fstatistic[2], summ$fstatistic[3], lower.tail = FALSE)
+    alpha <- input$alpha
+    is_significant <- p_f < alpha
+
+    student_choice <- input$model_significance == "significant"
+
+    correct <- student_choice == is_significant
+
+    feedback <- if (correct) {
+      shiny::HTML("<div class='alert alert-success'>¡Correcto! El modelo es ", ifelse(is_significant, "significativo", "no significativo"),
+                  " (p-valor F = ", format.pval(p_f, digits = 4), ").</div>")
+    } else {
+      shiny::HTML("<div class='alert alert-warning'>Incorrecto. El modelo es ", ifelse(is_significant, "significativo", "no significativo"),
+                  " (p-valor F = ", format.pval(p_f, digits = 4), "). Vuelve a la pestaña de correlaciones y selecciona variables diferentes.</div>")
+    }
+
+    output$significance_feedback <- shiny::renderUI({
+      feedback
+    })
+  })
+
+  # ----------------------------
+  # Confirmar modelo final
+  # ----------------------------
+  observeEvent(input$confirmar_modelo_final, {
+    shiny::req(input$modelo_final)
+    modelo_elegido <- input$modelo_final
+    shiny::showNotification(sprintf("Modelo final confirmado: %s. Puedes proceder a simulación y predicción.", modelo_elegido), type = "message")
+    shiny::updateTabsetPanel(session, "tabs", selected = "Predicción")
+  })
+
+  # ----------------------------
   # Reentrenar modelo con variables seleccionadas
   # ----------------------------
   observeEvent(input$retrain_model, {
@@ -531,6 +609,66 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
 
     shiny::showNotification("Modelo reentrenado con variables seleccionadas", type = "message")
   }, ignoreInit = TRUE)
+
+  # ----------------------------
+  # Asignación aleatoria de variable para interpretación en M3
+  # ----------------------------
+  observeEvent(modelo_manual(), {
+    shiny::req(modelo_manual())
+
+    fit <- modelo_manual()
+    vars_in_model <- names(stats::coef(fit))
+    vars_in_model <- vars_in_model[vars_in_model != "(Intercept)"]
+
+    shiny::validate(shiny::need(length(vars_in_model) > 0, "No hay variables en el modelo para asignar."))
+
+    if (is.null(rv$interp_target_m3) || !(rv$interp_target_m3 %in% vars_in_model)) {
+      set.seed(as.integer(as.numeric(Sys.time())) %% .Machine$integer.max)
+      rv$interp_target_m3 <- sample(vars_in_model, 1)
+    }
+
+    output$interp_var_target_m3 <- shiny::renderUI({
+      shiny::tagList(
+        shiny::p(shiny::strong("Variable asignada:"), rv$interp_target_m3),
+      )
+    })
+
+    shiny::updateTextAreaInput(
+      session, inputId = ns("interp_text_m3"),
+      placeholder = sprintf("Redacta tu interpretación centrada en: '%s'…", rv$interp_target_m3)
+    )
+  })
+
+  # ----------------------------
+  # Validación de interpretación en M3
+  # ----------------------------
+  observeEvent(input$interp_enviar_m3, {
+    shiny::req(modelo_manual(), rv$interp_target_m3)
+
+    fit <- modelo_manual()
+    v_target <- rv$interp_target_m3
+    texto <- trimws(input$interp_text_m3 %||% "")
+    texto_ok <- (nchar(texto) >= 40)  # Validar longitud mínima
+
+    # Generar interpretación automática correcta
+    auto <- .build_interpretacion_var_m3(
+      model = fit,
+      var = v_target,
+      alpha = input$alpha
+    )
+    ref_text <- auto$texto
+
+    output$interp_feedback_m3 <- shiny::renderUI({
+      shiny::tagList(
+        shiny::h5("Reporte de interpretación"),
+        shiny::p(if (texto_ok) sprintf("✓ Interpretación de '%s' recibida", v_target)
+                 else sprintf("✗ Amplía tu interpretación de '%s' (mín. 40 caracteres)", v_target)),
+        shiny::hr(),
+        shiny::strong("Interpretación de referencia (correcta)"),
+        shiny::p(ref_text)
+      )
+    })
+  })
 
   # ----------------------------
   # Modelo automático (stepAIC)
@@ -853,34 +991,6 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
       cat(sprintf("ME calculado: %.2f\n", new_client$ME))
       cat(sprintf("ME predicho por modelo: %.2f\n", pred_me))
       cat(sprintf("Diferencia: %.2f\n", pred_me - new_client$ME))
-    })
-
-    # Calcular elasticidades
-    coefs <- stats::coef(m_final)
-    elasticidades <- data.frame(
-      Variable = character(),
-      Elasticidad = numeric(),
-      stringsAsFactors = FALSE
-    )
-
-    # Elasticidad para cada variable numérica disponible en el modelo
-    vars_in_model <- names(coefs)
-    for (var in c("score_buro", "ingreso_verificado", "n_moras_previas", "rfm", "rate", "amount", "term")) {
-      if (var %in% vars_in_model && var %in% names(new_client) && !is.na(new_client[[var]])) {
-        coef_val <- coefs[var]
-        val_var <- new_client[[var]]
-        val_me <- pred_me
-        elast <- (coef_val * val_var) / val_me
-        elasticidades <- rbind(elasticidades, data.frame(
-          Variable = var,
-          Elasticidad = elast
-        ))
-      }
-    }
-
-    output$elasticidades <- DT::renderDT({
-      DT::datatable(elasticidades, options = list(dom = "t", paging = FALSE)) |>
-        DT::formatRound("Elasticidad", 4)
     })
 
   }, ignoreInit = TRUE)

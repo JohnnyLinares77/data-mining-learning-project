@@ -111,6 +111,13 @@ mod_m3_ui <- function(id){
 
             shiny::h4(shiny::strong("Selección preliminar de variables")),
             shiny::p("Basándote en las correlaciones con ME y los valores VIF, selecciona un conjunto inicial de variables para el modelo. Evita incluir variables altamente correlacionadas entre sí."),
+            shiny::p("Reglas generales para selección:"),
+            shiny::tags$ul(
+              shiny::tags$li("Prioriza variables con |correlación| > 0.3 con ME"),
+              shiny::tags$li("Excluye variables con VIF > 5-10 para evitar multicolinealidad"),
+              shiny::tags$li("Limita a 5-7 variables para evitar sobreajuste"),
+              shiny::tags$li("Considera importancia de negocio además de estadística")
+            ),
 
             shiny::actionButton(ns("calcular_cor"), "Calcular correlaciones y VIF"),
             shiny::br(), shiny::br(),
@@ -118,7 +125,12 @@ mod_m3_ui <- function(id){
             DT::DTOutput(ns("cor_table")),
             shiny::br(),
             shiny::h5("Valores VIF:"),
-            DT::DTOutput(ns("vif_table"))
+            DT::DTOutput(ns("vif_table")),
+            shiny::br(),
+            shiny::h5("Selecciona las variables para el modelo:"),
+            shiny::checkboxGroupInput(ns("selected_vars"), "Variables seleccionadas:",
+                                    choices = c(), selected = c()),
+            shiny::actionButton(ns("confirmar_seleccion"), "Confirmar selección de variables")
           ),
 
           # ---- Tab 3: Análisis Modelo Regresión Lineal
@@ -148,7 +160,17 @@ mod_m3_ui <- function(id){
             shiny::br(),
             shiny::h5("Métricas de ajuste del modelo:"),
             DT::DTOutput(ns("model_metrics")),
-            shiny::plotOutput(ns("resid_plot"), height = "320px")
+            shiny::plotOutput(ns("resid_plot"), height = "320px"),
+            shiny::br(),
+            shiny::h5("Validación de significancia del modelo:"),
+            shiny::p("Basándote en el p-valor de la prueba F y el nivel α, indica si el modelo es significativo:"),
+            shiny::radioButtons(ns("model_significance"), "¿El modelo es significativo?",
+                              choices = c("Sí, rechaza H0 (p < α)" = "significant",
+                                          "No, no rechaza H0 (p >= α)" = "not_significant"),
+                              selected = character(0)),
+            shiny::actionButton(ns("validar_significancia"), "Validar significancia"),
+            shiny::br(), shiny::br(),
+            shiny::uiOutput(ns("significance_feedback"))
           ),
 
           # ---- Tab 4: Análisis Coeficientes Regresión Lineal
@@ -168,28 +190,47 @@ mod_m3_ui <- function(id){
               shiny::tags$li("Magnitud: efecto absoluto (coeficientes más grandes = mayor impacto)")
             ),
 
-            shiny::h4(shiny::strong("Seleccionar las variables y reentrenar")),
-            shiny::p("Basándote en la significancia estadística y la importancia de negocio, selecciona qué variables mantener en el modelo final."),
+            shiny::h4(shiny::strong("Seleccionar las variables significativas")),
+            shiny::p("Selecciona las variables cuyos coeficientes son estadísticamente significativos (p-valor < α) para mantener en el modelo final."),
 
             DT::DTOutput(ns("coef_table")),
             shiny::br(),
-            shiny::checkboxGroupInput(ns("keep_vars"), "Variables a mantener en el modelo:",
+            shiny::checkboxGroupInput(ns("keep_vars"), "Variables significativas a mantener:",
                                     choices = c(), selected = c()),
             shiny::actionButton(ns("retrain_model"), "Reentrenar modelo con variables seleccionadas"),
             shiny::br(), shiny::br(),
-            shiny::verbatimTextOutput(ns("model_final_summary"))
+            shiny::verbatimTextOutput(ns("model_final_summary")),
+            shiny::br(),
+            shiny::h5("Interpretación de coeficiente"),
+            shiny::p("Se te ha asignado una variable al azar. Interpreta su coeficiente siguiendo esta guía:"),
+            shiny::tags$ul(
+              shiny::tags$li("Indica si el coeficiente es positivo o negativo"),
+              shiny::tags$li("Explica qué significa un aumento de 1 unidad en la variable para ME"),
+              shiny::tags$li("Menciona si es estadísticamente significativo"),
+              shiny::tags$li("Ejemplo: 'El coeficiente de [variable] es [valor], positivo/significativo, indicando que un aumento de 1 en [variable] aumenta ME en [valor] unidades, con p-valor [p], lo que es significativo/no significativo.'")
+            ),
+            shiny::uiOutput(ns("interp_var_target_m3")),
+            shiny::textAreaInput(ns("interp_text_m3"), "Redacta tu interpretación aquí:",
+                               placeholder = "Escribe tu interpretación del coeficiente asignado...",
+                               rows = 4),
+            shiny::actionButton(ns("interp_enviar_m3"), "Enviar interpretación"),
+            shiny::br(), shiny::br(),
+            shiny::uiOutput(ns("interp_feedback_m3"))
           ),
 
           # ---- Tab 5: Comparación de Modelos
           shiny::tabPanel(
             title = "Comparación de Modelos",
-            shiny::h4(shiny::strong("Explicación sobre métricas")),
-            shiny::p("Para comparar modelos de regresión lineal, usamos varias métricas:"),
+            shiny::h4(shiny::strong("Explicación detallada de métricas de comparación")),
+            shiny::p("Para elegir el mejor modelo de regresión lineal entre opciones, evaluamos métricas que balancean ajuste a los datos y parsimonia:"),
             shiny::tags$ul(
-              shiny::tags$li(shiny::strong("R²:"), " proporción de varianza explicada (más alto = mejor, máximo 1)"),
-              shiny::tags$li(shiny::strong("AIC (Akaike Information Criterion):"), " mide calidad del ajuste penalizando complejidad (más bajo = mejor)"),
-              shiny::tags$li(shiny::strong("MSE (Mean Squared Error):"), " error promedio al cuadrado (más bajo = mejor)")
+              shiny::tags$li(shiny::strong("R²:"), " proporción de la varianza en ME explicada por el modelo (0-1). Valores más altos indican mejor ajuste, pero puede sobreestimar con muchos predictores."),
+              shiny::tags$li(shiny::strong("R² Ajustado:"), " versión penalizada de R² que considera el número de variables. Prefiere modelos simples con buen ajuste."),
+              shiny::tags$li(shiny::strong("AIC (Criterio de Información de Akaike):"), " mide la calidad relativa del modelo penalizando la complejidad. Modelos con AIC más bajo son preferidos."),
+              shiny::tags$li(shiny::strong("MSE (Error Cuadrático Medio):"), " promedio de los cuadrados de los errores de predicción. Más bajo indica predicciones más precisas."),
+              shiny::tags$li(shiny::strong("RMSE (Raíz del Error Cuadrático Medio):"), " raíz cuadrada del MSE, en las mismas unidades que ME. Facilita interpretación.")
             ),
+            shiny::p("El modelo óptimo típicamente tiene bajo RMSE/AIC y alto R² ajustado, evitando sobreajuste."),
 
             shiny::h4(shiny::strong("Modelo generado por la computadora")),
             shiny::p("El modelo automático utiliza el método stepwise AIC para seleccionar automáticamente las mejores variables, buscando el mejor balance entre ajuste y parsimonia."),
@@ -203,10 +244,11 @@ mod_m3_ui <- function(id){
             DT::DTOutput(ns("comp_table")),
 
             shiny::h4(shiny::strong("Elección del modelo final")),
-            shiny::p("Considera las métricas y elige qué modelo usarás para las predicciones:"),
+            shiny::p("Considera las métricas y elige qué modelo usarás para las predicciones y elasticidades:"),
             shiny::radioButtons(ns("modelo_final"), "Modelo para predicción:",
                               choices = c("Manual (seleccionado)" = "manual", "Automático (stepwise)" = "automatico"),
-                              selected = "manual")
+                              selected = "manual"),
+            shiny::actionButton(ns("confirmar_modelo_final"), "Confirmar y continuar")
           ),
 
           # ---- Tab 6: Predicción
@@ -237,11 +279,7 @@ mod_m3_ui <- function(id){
             shiny::actionButton(ns("predecir"), "Predecir ME"),
             shiny::br(), shiny::br(),
             shiny::h5("Resultado de la predicción:"),
-            shiny::verbatimTextOutput(ns("pred_result")),
-            shiny::br(),
-            shiny::h5("Análisis de elasticidades:"),
-            shiny::p("La elasticidad mide cuánto cambia porcentualmente ME ante un cambio porcentual en cada variable."),
-            DT::DTOutput(ns("elasticidades"))
+            shiny::verbatimTextOutput(ns("pred_result"))
           )
         )
       )
