@@ -35,8 +35,8 @@ mod_m3_ui <- function(id){
       shiny::column(
         width = 9,
         shiny::h3("Módulo 3: Pricing y Elasticidad"),
-        shiny::p("Se estima el margen esperado (ME) como función de la oferta (tasa, monto, plazo) y del perfil del cliente. \
-                 Luego se modela ME con regresión lineal y se derivan elasticidades."),
+        shiny::p("Se utiliza un margen histórico basado en el perfil del cliente, tomado de registros históricos. \
+                  Luego se modela el margen con regresión lineal para identificar factores de rentabilidad."),
         shiny::tabsetPanel(
           id = ns("tabs"),
 
@@ -45,24 +45,23 @@ mod_m3_ui <- function(id){
             title = "Introducción",
             shiny::br(),
             shiny::h4(shiny::strong("Propósito")),
-            shiny::p("Este módulo estima el ", shiny::strong("margen esperado (ME)"), " de cada cliente como función de las características del cliente y los términos de la oferta de crédito (tasa, monto, plazo). El ME se calcula como el ingreso bruto esperado menos las pérdidas esperadas por mora. Con estos datos, se construye un modelo de regresión lineal que relaciona el ME con las variables predictoras, permitiendo identificar qué factores influyen en la rentabilidad de cada cliente y derivar elasticidades para optimizar el pricing."),
+            shiny::p("Este módulo utiliza un ", shiny::strong("margen histórico"), " basado en el perfil del cliente (score, ingreso, moras, RFM), tomado de registros históricos. Con estos datos, se construye un modelo de regresión lineal que relaciona el margen con las variables predictoras, permitiendo identificar qué factores influyen en la rentabilidad histórica de cada cliente."),
 
             shiny::h4(shiny::strong("Definiciones básicas")),
             shiny::tags$ul(
-              shiny::tags$li("El ", shiny::strong("margen esperado (ME)"), " es la ganancia neta esperada por cliente: \\(ME = \\text{Ingreso bruto} \\times P(\\text{aceptar}) \\times (1 - P(\\text{mora}))\\)."),
-              shiny::tags$li("La ", shiny::strong("regresión lineal"), " modela la relación entre una variable respuesta (ME) y variables predictoras mediante: \\(Y = \\beta_0 + \\beta_1 X_1 + \\cdots + \\beta_p X_p + \\epsilon\\)."),
-              shiny::tags$li("Las ", shiny::strong("elasticidades"), " miden el cambio porcentual en ME ante un cambio porcentual en una variable predictora.")
+              shiny::tags$li("El ", shiny::strong("margen histórico"), " es la ganancia neta histórica por cliente, basada en su perfil de riesgo y comportamiento, tomada de registros históricos."),
+              shiny::tags$li("La ", shiny::strong("regresión lineal"), " modela la relación entre una variable respuesta (margen) y variables predictoras mediante: \\(Y = \\beta_0 + \\beta_1 X_1 + \\cdots + \\beta_p X_p + \\epsilon\\).")
             ),
 
             shiny::h4(shiny::strong("Funcionamiento del modelo")),
             shiny::p("La regresión lineal asume una relación lineal entre las variables predictoras y la respuesta. Los coeficientes \\(\\beta_j\\) indican cuánto cambia ME (en unidades) cuando la variable correspondiente aumenta en una unidad, manteniendo las demás constantes."),
 
             shiny::h4(shiny::strong("Contexto del problema de negocio")),
-            shiny::p("En el pricing de préstamos, la entidad financiera busca maximizar el margen esperado considerando tanto la probabilidad de aceptación como el riesgo de mora. El modelo de regresión lineal permite:"),
+            shiny::p("En el análisis de rentabilidad histórica, la entidad financiera busca entender qué factores del cliente afectan el margen. El modelo de regresión lineal permite:"),
             shiny::tags$ul(
-              shiny::tags$li(shiny::strong("Identificar factores clave:"), " qué variables del cliente y de la oferta afectan más el ME."),
-              shiny::tags$li(shiny::strong("Optimizar precios:"), " ajustar tasa, monto y plazo para maximizar rentabilidad por cliente."),
-              shiny::tags$li(shiny::strong("Segmentar clientes:"), " ofrecer términos diferenciados según perfil de riesgo y aceptación.")
+              shiny::tags$li(shiny::strong("Identificar factores clave:"), " qué variables del cliente afectan más el ME histórico."),
+              shiny::tags$li(shiny::strong("Segmentar clientes:"), " agrupar clientes por perfil de rentabilidad."),
+              shiny::tags$li(shiny::strong("Predecir rentabilidad:"), " estimar ME para nuevos clientes basado en su perfil.")
             ),
 
             shiny::h4(shiny::strong("Flujo general")),
@@ -85,7 +84,7 @@ mod_m3_ui <- function(id){
               shiny::tags$li("-1: correlación negativa perfecta (una aumenta cuando la otra disminuye)"),
               shiny::tags$li("0: no hay relación lineal")
             ),
-            shiny::p("En el contexto del modelo de regresión lineal, buscamos variables con correlación alta (en valor absoluto) con la variable respuesta (ME), ya que estas serán mejores predictoras."),
+            shiny::p("En el contexto del modelo de regresión lineal, buscamos variables con correlación alta (en valor absoluto) con la variable respuesta (margen histórico), ya que estas serán mejores predictoras."),
 
             shiny::h4(shiny::strong("Reconocer las variables con mayor asociación")),
             shiny::p("Selecciona las variables numéricas en el panel izquierdo y calcula la matriz de correlación. Identifica cuáles tienen la correlación más alta con ME."),
@@ -146,12 +145,11 @@ mod_m3_ui <- function(id){
             shiny::p("Si el p-valor de la prueba F es < α, rechazamos H₀ y concluimos que el modelo explica significativamente la variabilidad en ME."),
 
             shiny::h4(shiny::strong("Validar si el modelo se ajusta a la población")),
-            shiny::p("Además de la significancia estadística, evaluamos qué tan bien el modelo se ajusta a los datos mediante:"),
+            shiny::p("Además de la significancia estadística, evaluamos qué tan bien el modelo se ajusta a los datos históricos mediante:"),
             shiny::tags$ul(
-              shiny::tags$li(shiny::strong("R²:"), " proporción de variabilidad en ME explicada por el modelo (0-1)"),
+              shiny::tags$li(shiny::strong("R²:"), " proporción de variabilidad en margen histórico explicada por el modelo (0-1)"),
               shiny::tags$li(shiny::strong("R² ajustado:"), " R² penalizado por número de variables"),
-              shiny::tags$li(shiny::strong("MSE:"), " error cuadrático medio (más bajo = mejor ajuste)"),
-              shiny::tags$li(shiny::strong("Análisis de residuos:"), " verificar normalidad, homocedasticidad y ausencia de patrones")
+              shiny::tags$li(shiny::strong("MSE:"), " error cuadrático medio (más bajo = mejor ajuste)")
             ),
 
             shiny::actionButton(ns("ajustar_modelo"), "Ajustar modelo de regresión lineal"),
@@ -160,7 +158,6 @@ mod_m3_ui <- function(id){
             shiny::br(),
             shiny::h5("Métricas de ajuste del modelo:"),
             DT::DTOutput(ns("model_metrics")),
-            shiny::plotOutput(ns("resid_plot"), height = "320px"),
             shiny::br(),
             shiny::h5("Validación de significancia del modelo:"),
             shiny::p("Basándote en el p-valor de la prueba F y el nivel α, indica si el modelo es significativo:"),
@@ -183,10 +180,10 @@ mod_m3_ui <- function(id){
             shiny::p("Si p-valor < α, la variable es estadísticamente significativa."),
 
             shiny::h4(shiny::strong("Interpretación de coeficientes del Modelo")),
-            shiny::p("Cada coeficiente indica cuánto cambia ME (en unidades monetarias) cuando la variable aumenta en una unidad:"),
+            shiny::p("Cada coeficiente indica cuánto cambia el margen histórico (en unidades monetarias) cuando la variable aumenta en una unidad:"),
             shiny::tags$ul(
-              shiny::tags$li("Coeficiente positivo: la variable aumenta ME"),
-              shiny::tags$li("Coeficiente negativo: la variable disminuye ME"),
+              shiny::tags$li("Coeficiente positivo: la variable aumenta ME histórico"),
+              shiny::tags$li("Coeficiente negativo: la variable disminuye ME histórico"),
               shiny::tags$li("Magnitud: efecto absoluto (coeficientes más grandes = mayor impacto)")
             ),
 
@@ -239,7 +236,7 @@ mod_m3_ui <- function(id){
           shiny::tabPanel(
             title = "Predicción",
             shiny::h4(shiny::strong("Predicción con nuevos datos")),
-            shiny::p("Ingresa los datos de un nuevo cliente para predecir su margen esperado (ME) usando el modelo seleccionado."),
+            shiny::p("Ingresa los datos de un nuevo cliente para predecir su margen histórico usando el modelo seleccionado."),
 
             shiny::h5("Datos del cliente:"),
             shiny::fluidRow(
@@ -260,7 +257,7 @@ mod_m3_ui <- function(id){
               )
             ),
 
-            shiny::actionButton(ns("predecir"), "Predecir ME"),
+            shiny::actionButton(ns("predecir"), "Predecir Margen"),
             shiny::br(), shiny::br(),
             shiny::h5("Resultado de la predicción:"),
             shiny::verbatimTextOutput(ns("pred_result"))

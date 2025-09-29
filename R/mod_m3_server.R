@@ -28,7 +28,7 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
 
       # Lista de numéricas disponible
       num_vars <- names(df)[vapply(df, is.numeric, TRUE)]
-      exclude_vars <- c("ME","id_cliente","p_accept","p_mora",
+      exclude_vars <- c("margen","id_cliente","p_accept","p_mora",
                         grep("\\.x$|\\.y$|\\.cluster$|\\.score$", num_vars, value = TRUE))
       num_vars <- setdiff(num_vars, exclude_vars)
 
@@ -66,7 +66,7 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
       }
 
       # Variables por defecto disponibles
-      selected_default <- c("rate","amount","term","score_buro","rfm","ingreso_verificado",
+      selected_default <- c("tasa","monto_oferta","plazo","score_buro","rfm","ingreso_verificado",
                            "cluster_id","score")
       selected_available <- intersect(selected_default, vars_con_variacion)
 
@@ -200,23 +200,13 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
       df$p_mora <- runif(nrow(df), 0.01, 0.3)  # Fallback simple
     }
 
-    # Ingreso bruto y ME base (contable)
-    ingreso_bruto <- df$rate * df$amount * (df$term / 12)
-    base_me <- ingreso_bruto * df$p_accept * (1 - df$p_mora)
-
-    # Ajuste directo para asegurar correlaciones > 0.5 con variables clave
-    # Escalar variables clave para el ajuste
-    s_buro    <- if ("score_buro" %in% names(df)) scale(df$score_buro) else 0
-    ingreso   <- if ("ingreso_verificado" %in% names(df)) scale(df$ingreso_verificado) else 0
-    moras_prev<- if ("n_moras_previas" %in% names(df)) scale(df$n_moras_previas) else 0
-    rfm       <- if ("rfm" %in% names(df)) scale(df$rfm) else 0
-
-    # Ajuste lineal para aumentar correlaciones con variables predictoras clave
-    # Coeficientes calibrados para lograr correlaciones > 0.5
-    me_adjustment <- 1500 * (0.5 * s_buro + 0.6 * ingreso - 0.4 * moras_prev + 0.3 * rfm)
-
-    # ME final = componente base + ajuste directo
-    df$ME <- base_me + me_adjustment
+    # Usar Margen Histórico como variable respuesta margen
+    if ("margen" %in% names(df)) {
+      df$margen <- df$margen
+    } else {
+      # Fallback si no existe (no debería ocurrir)
+      df$margen <- 5000
+    }
 
     # VALIDACIÓN: Verificar que ME tiene valores razonables
     me_range <- range(df$ME, na.rm = TRUE)
@@ -276,7 +266,7 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
     vars <- input$vars_numeric
     shiny::validate(shiny::need(length(vars) >= 1, "Selecciona al menos una variable numérica."))
     shiny::validate(shiny::need(nrow(df) > 0, "No hay datos disponibles para calcular correlaciones."))
-    shiny::validate(shiny::need("ME" %in% names(df), "La variable respuesta ME no está disponible."))
+    shiny::validate(shiny::need("margen" %in% names(df), "La variable respuesta margen no está disponible."))
 
     # VALIDACIÓN: Verificar que hay datos suficientes
     if (nrow(df) < 3) {
@@ -302,7 +292,7 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
       sprintf("No hay variables con varianza positiva y suficientes datos. Variables con problemas: %s",
               paste(setdiff(vars_available, vars_valid), collapse = ", "))))
 
-    cols   <- intersect(unique(c(vars_valid, "ME")), names(df))
+    cols   <- intersect(unique(c(vars_valid, "margen")), names(df))
     df_cor <- df[, cols, drop = FALSE]
     keep   <- vapply(df_cor, is.numeric, TRUE)
     df_cor <- df_cor[, keep, drop = FALSE]
@@ -316,9 +306,9 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
 
     cor_mat <- stats::cor(df_cor, use = "pairwise.complete.obs")
 
-    # Verificar que ME existe en la matriz de correlación
-    if (!"ME" %in% rownames(cor_mat)) {
-      shiny::showNotification("La variable ME no está disponible para calcular correlaciones.", type = "error")
+    # Verificar que margen existe en la matriz de correlación
+    if (!"margen" %in% rownames(cor_mat)) {
+      shiny::showNotification("La variable margen no está disponible para calcular correlaciones.", type = "error")
       return(NULL)
     }
 
@@ -329,7 +319,7 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
       return(NULL)
     }
 
-    cor_with_me <- cor_mat["ME", vars_in_cor, drop = FALSE]
+    cor_with_me <- cor_mat["margen", vars_in_cor, drop = FALSE]
 
     # Guardar datos procesados para usar en VIF
     rv$cor_data <- list(
@@ -399,8 +389,8 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
       }
 
       tryCatch({
-        # Crear fórmula sin ME usando las mismas variables que en correlaciones
-        form_str <- paste("ME ~", paste(vars_in_cor, collapse = " + "))
+        # Crear fórmula sin margen usando las mismas variables que en correlaciones
+        form_str <- paste("margen ~", paste(vars_in_cor, collapse = " + "))
         fit_vif <- stats::lm(stats::as.formula(form_str), data = df_vif_model)
         vif_values <- car::vif(fit_vif)
         vif_df <- data.frame(Variable = names(vif_values), VIF = as.numeric(vif_values))
@@ -437,10 +427,10 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
 
     # Debug: Check data validity
     shiny::validate(shiny::need(nrow(df) > 0, "No hay datos disponibles para entrenar el modelo."))
-    shiny::validate(shiny::need("ME" %in% names(df), "La variable respuesta ME no está disponible."))
+    shiny::validate(shiny::need("margen" %in% names(df), "La variable respuesta margen no está disponible."))
 
     # Check for complete cases
-    model_vars <- c("ME", vars)
+    model_vars <- c("margen", vars)
     complete_cases <- complete.cases(df[, model_vars, drop = FALSE])
     shiny::validate(shiny::need(sum(complete_cases) > 0,
       sprintf("No hay casos completos para modelar. Verifica que las variables seleccionadas no tengan valores faltantes.")))
@@ -449,7 +439,7 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
     df_model <- df[complete_cases, model_vars, drop = FALSE]
     shiny::validate(shiny::need(nrow(df_model) > 1, "Insuficientes casos completos para el modelo."))
 
-    form_str <- paste("ME ~", paste(vars, collapse = " + "))
+    form_str <- paste("margen ~", paste(vars, collapse = " + "))
     fit      <- stats::lm(stats::as.formula(form_str), data = df_model)
     modelo_manual(fit)
 
@@ -492,12 +482,6 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
                         backgroundColor = DT::styleEqual(c(TRUE, FALSE), c("#d4edda", "#f8d7da")))
     })
 
-    output$resid_plot <- shiny::renderPlot({
-      par(mfrow = c(1,2))
-      plot(fit, which = 1)
-      plot(fit, which = 2)
-      par(mfrow = c(1,1))
-    })
   }, ignoreInit = TRUE)
 
   # ----------------------------
@@ -549,10 +533,10 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
 
     # Debug: Check data validity
     shiny::validate(shiny::need(nrow(df) > 0, "No hay datos disponibles para reentrenar el modelo."))
-    shiny::validate(shiny::need("ME" %in% names(df), "La variable respuesta ME no está disponible."))
+    shiny::validate(shiny::need("margen" %in% names(df), "La variable respuesta margen no está disponible."))
 
     # Check for complete cases
-    model_vars <- c("ME", vars_keep)
+    model_vars <- c("margen", vars_keep)
     complete_cases <- complete.cases(df[, model_vars, drop = FALSE])
     shiny::validate(shiny::need(sum(complete_cases) > 0,
       sprintf("No hay casos completos para reentrenar. Verifica que las variables seleccionadas no tengan valores faltantes.")))
@@ -561,7 +545,7 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
     df_model <- df[complete_cases, model_vars, drop = FALSE]
     shiny::validate(shiny::need(nrow(df_model) > 1, "Insuficientes casos completos para reentrenar el modelo."))
 
-    form_str <- paste("ME ~", paste(vars_keep, collapse = " + "))
+    form_str <- paste("margen ~", paste(vars_keep, collapse = " + "))
     fit_new <- stats::lm(stats::as.formula(form_str), data = df_model)
     modelo_manual(fit_new)
 
@@ -607,8 +591,8 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
       shiny::showNotification("No hay datos disponibles para entrenar el modelo automático.", type = "error")
       return(NULL)
     }
-    if (!"ME" %in% names(df)) {
-      shiny::showNotification("La variable respuesta ME no está disponible.", type = "error")
+    if (!"margen" %in% names(df)) {
+      shiny::showNotification("La variable respuesta margen no está disponible.", type = "error")
       return(NULL)
     }
 
@@ -625,7 +609,7 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
     # 1. Identificar variables numéricas con suficientes datos no-NA (>80%)
     progress$set(value = 0.2, detail = "Seleccionando variables...")
     num_vars <- names(df)[vapply(df, is.numeric, TRUE)]
-    num_vars <- setdiff(num_vars, "ME")
+    num_vars <- setdiff(num_vars, "margen")
 
     if (length(num_vars) == 0) {
       shiny::showNotification("No hay variables predictoras numéricas disponibles.", type = "error")
@@ -647,8 +631,8 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
     # Limitar a las 10 variables más correlacionadas con ME para optimizar velocidad
     if (length(vars_valid) > 10) {
       cor_with_me <- sapply(vars_valid, function(v) {
-        cor_val <- tryCatch(abs(cor(df[[v]], df$ME, use = "complete.obs")), error = function(e) 0)
-        message(sprintf("Correlación %s-ME: %.3f", v, cor_val))
+        cor_val <- tryCatch(abs(cor(df[[v]], df$margen, use = "complete.obs")), error = function(e) 0)
+        message(sprintf("Correlación %s-margen: %.3f", v, cor_val))
         cor_val
       })
       vars_valid <- names(sort(cor_with_me, decreasing = TRUE))[1:10]
@@ -662,7 +646,7 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
 
     # 2. Usar solo casos completos para variables seleccionadas
     progress$set(value = 0.3, detail = "Preparando datos...")
-    model_vars <- c("ME", vars_valid)
+    model_vars <- c("margen", vars_valid)
     complete_cases <- complete.cases(df[, model_vars, drop = FALSE])
     df_model <- df[complete_cases, model_vars, drop = FALSE]
 
@@ -674,7 +658,7 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
     # 3. Proceder con stepAIC optimizado
     progress$set(value = 0.5, detail = "Entrenando modelo...")
     tryCatch({
-      full_form <- stats::as.formula(paste("ME ~", paste(vars_valid, collapse = " + ")))
+      full_form <- stats::as.formula(paste("margen ~", paste(vars_valid, collapse = " + ")))
       full_fit  <- stats::lm(full_form, data = df_model)
 
       # Optimizar stepAIC: usar dirección backward primero, luego both
@@ -702,7 +686,7 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
       # Evaluar modelo automático
       auto_fit_tr <- stats::lm(stats::formula(auto_fit), data = tr)
       pred_auto   <- predict(auto_fit_tr, newdata = te)
-      rmse_auto <- rmse(te$ME, pred_auto)
+      rmse_auto <- rmse(te$margen, pred_auto)
       r2_auto   <- summary(auto_fit_tr)$adj.r.squared
       metrics_df <- rbind(metrics_df, data.frame(Modelo = "Automático", RMSE = rmse_auto, R2_adj = r2_auto))
       auto_vars <- attr(terms(auto_fit), "term.labels")
@@ -712,7 +696,7 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
       if (!is.null(modelo_manual())) {
         manual_fit_tr <- stats::lm(stats::formula(modelo_manual()), data = tr)
         pred_man <- predict(manual_fit_tr, newdata = te)
-        rmse_man <- rmse(te$ME, pred_man)
+        rmse_man <- rmse(te$margen, pred_man)
         r2_man   <- summary(manual_fit_tr)$adj.r.squared
         metrics_df <- rbind(metrics_df, data.frame(Modelo = "Manual", RMSE = rmse_man, R2_adj = r2_man))
         metrics_list$manual <- list(rmse = rmse_man, r2_adj = r2_man, alpha = input$alpha, vars = input$vars_numeric %||% character(0))
@@ -755,9 +739,9 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
     tpl <- df0[1, , drop = FALSE]
     df_sim <- do.call(rbind, lapply(r_seq, function(r){
       tmp <- tpl
-      tmp$rate   <- r
-      tmp$amount <- monto
-      tmp$term   <- plazo
+      tmp$tasa   <- r
+      tmp$monto_oferta <- monto
+      tmp$plazo   <- plazo
 
       # Usar score_buro si existe, sino score
       if ("score_buro" %in% names(tmp)) {
@@ -773,8 +757,8 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
         tmp$cluster <- cluster_val
       }
 
-      # Calcular ME consistente con base_df (incluyendo ajuste directo)
-      ingreso_bruto <- tmp$rate * tmp$amount * (tmp$term/12)
+      # Calcular ME consistente (no usado en simulación actual)
+      ingreso_bruto <- tmp$tasa * tmp$amount * (tmp$plazo/12)
 
       # Usar p_accept y p_mora disponibles (sin sufijos)
       p_accept_val <- if ("p_accept" %in% names(tmp) && !is.na(tmp$p_accept)) tmp$p_accept else 0.5
@@ -800,10 +784,10 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
     dME_dr <- numeric(length(r_seq))
     for (i in seq_along(r_seq)) {
       r <- r_seq[i]; d <- 0
-      if ("rate" %in% names(coefs))             d <- d + coefs["rate"]
-      if ("I(rate^2)" %in% names(coefs))        d <- d + 2*coefs["I(rate^2)"]*r
-      if ("rate:score" %in% names(coefs))       d <- d + coefs["rate:score"]*score
-      if ("rate:score_buro" %in% names(coefs))  d <- d + coefs["rate:score_buro"]*score
+      if ("tasa" %in% names(coefs))             d <- d + coefs["tasa"]
+      if ("I(tasa^2)" %in% names(coefs))        d <- d + 2*coefs["I(tasa^2)"]*r
+      if ("tasa:score" %in% names(coefs))       d <- d + coefs["tasa:score"]*score
+      if ("tasa:score_buro" %in% names(coefs))  d <- d + coefs["tasa:score_buro"]*score
       dME_dr[i] <- d
     }
 
@@ -857,39 +841,12 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
       ingreso_verificado = input$pred_ingreso,
       n_moras_previas = input$pred_moras,
       rfm = input$pred_rfm,
-      rate = input$pred_tasa,
-      amount = input$pred_monto,
-      term = input$pred_plazo,
+      tasa = input$pred_tasa,
+      monto_oferta = input$pred_monto,
+      plazo = input$pred_plazo,
       p_accept = input$pred_p_accept,
       p_mora = input$pred_p_mora
     )
-
-    # Calcular ME usando la misma fórmula que en base_df
-    ingreso_bruto <- new_client$rate * new_client$amount * (new_client$term / 12)
-    base_me <- ingreso_bruto * new_client$p_accept * (1 - new_client$p_mora)
-
-    # Ajuste directo para correlaciones (usar los mismos parámetros de escala del dataset original)
-    df <- base_df()
-
-    # Calcular escalas de forma segura
-    s_buro <- if (!is.na(new_client$score_buro) && !all(is.na(df$score_buro))) {
-      (new_client$score_buro - mean(df$score_buro, na.rm = TRUE)) / sd(df$score_buro, na.rm = TRUE)
-    } else { 0 }
-
-    ingreso <- if (!is.na(new_client$ingreso_verificado) && !all(is.na(df$ingreso_verificado))) {
-      (new_client$ingreso_verificado - mean(df$ingreso_verificado, na.rm = TRUE)) / sd(df$ingreso_verificado, na.rm = TRUE)
-    } else { 0 }
-
-    moras_prev <- if (!is.na(new_client$n_moras_previas) && !all(is.na(df$n_moras_previas))) {
-      (new_client$n_moras_previas - mean(df$n_moras_previas, na.rm = TRUE)) / sd(df$n_moras_previas, na.rm = TRUE)
-    } else { 0 }
-
-    rfm_val <- if (!is.na(new_client$rfm) && !all(is.na(df$rfm))) {
-      (new_client$rfm - mean(df$rfm, na.rm = TRUE)) / sd(df$rfm, na.rm = TRUE)
-    } else { 0 }
-
-    me_adjustment <- 1500 * (0.5 * s_buro + 0.6 * ingreso - 0.4 * moras_prev + 0.3 * rfm_val)
-    new_client$ME <- base_me + me_adjustment
 
     # Predicción usando el modelo
     pred_me <- predict(m_final, newdata = new_client)
@@ -900,15 +857,8 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
       cat(sprintf("Ingreso verificado: %.0f\n", new_client$ingreso_verificado))
       cat(sprintf("N° moras previas: %.0f\n", new_client$n_moras_previas))
       cat(sprintf("RFM: %.0f\n", new_client$rfm))
-      cat(sprintf("Tasa ofrecida: %.3f\n", new_client$rate))
-      cat(sprintf("Monto: %.0f\n", new_client$amount))
-      cat(sprintf("Plazo: %.0f meses\n", new_client$term))
-      cat(sprintf("P(aceptar): %.2f\n", new_client$p_accept))
-      cat(sprintf("P(mora): %.2f\n", new_client$p_mora))
       cat("\n")
-      cat(sprintf("ME calculado: %.2f\n", new_client$ME))
-      cat(sprintf("ME predicho por modelo: %.2f\n", pred_me))
-      cat(sprintf("Diferencia: %.2f\n", pred_me - new_client$ME))
+      cat(sprintf("Margen histórico predicho por modelo: %.2f\n", pred_me))
     })
 
   }, ignoreInit = TRUE)

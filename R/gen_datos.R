@@ -56,16 +56,6 @@ gen_datos <- function(n_clientes = 1000L, seed = 123L){
     stringsAsFactors     = FALSE
   )
 
-  # Simular Margen Esperado (ME) basado en score, ingreso y riesgo, con mayor variabilidad
-  financieras$margen_esperado <- with(financieras, {
-    # Unir con moras para riesgo
-    moras <- comp_historico$n_moras_previas[match(id_cliente, comp_historico$id_cliente)]
-    rfm <- comp_historico$rfm[match(id_cliente, comp_historico$id_cliente)]
-    risk_factor <- 1 - (moras / 5) * 0.5  # Penalizar moras
-    potential_factor <- rfm / 100  # Bonificar RFM alto
-    base_me <- (score_buro / 100) * (ingreso_verificado / 100) * 100 * risk_factor * potential_factor
-    pmax(0, base_me)  # asegurar positivo
-  })
 
   # --- POST DESEMBOLSO (para consistencia; no se usa en M1)
   post_desembolso <- data.frame(
@@ -80,36 +70,61 @@ gen_datos <- function(n_clientes = 1000L, seed = 123L){
   )
 
   # --- OFERTAS HISTÓRICAS (para M3 - simular datos históricos de ofertas)
-  # Generar múltiples ofertas por cliente para simular historial
-  n_ofertas_total <- n_clientes * 3  # 3 ofertas promedio por cliente
-  id_cliente_ofertas <- rep(1:n_clientes, each = 3)
+  # Una oferta por cliente para evitar duplicación en merge
+  n_ofertas_total <- n_clientes
+  id_cliente_ofertas <- 1:n_clientes
 
   ofertas_historicas <- data.frame(
     id_cliente = id_cliente_ofertas,
-    rate   = runif(n_ofertas_total, 0.03, 0.12),  # tasas históricas ofrecidas
-    amount = round(runif(n_ofertas_total, 1000, 25000), 0),  # montos históricos
-    term   = sample(c(3,6,9,12,18,24,36,48), n_ofertas_total, replace = TRUE),  # plazos históricos
+    tasa   = runif(n_ofertas_total, 0.03, 0.12),  # tasas históricas ofrecidas
+    monto_oferta = round(runif(n_ofertas_total, 1000, 25000), 0),  # montos históricos
+    plazo   = sample(c(3,6,9,12,18,24,36,48), n_ofertas_total, replace = TRUE),  # plazos históricos
     stringsAsFactors = FALSE
   )
 
   # Hacer que las ofertas dependan del perfil del cliente (más conservadoras para clientes de riesgo)
   for(i in 1:n_clientes) {
-    cliente_rows <- ofertas_historicas$id_cliente == i
     score_buro_i <- financieras$score_buro[i]
     ingreso_i <- financieras$ingreso_verificado[i]
     moras_i <- comp_historico$n_moras_previas[i]
 
     # Clientes con mejor score/income: ofertas más agresivas (tasas más bajas, montos más altos)
-    rate_adjust <- ifelse(score_buro_i > 700 & ingreso_i > 5000 & moras_i == 0, -0.02,
-                         ifelse(score_buro_i < 500 | moras_i > 2, 0.03, 0))
-    amount_adjust <- ifelse(score_buro_i > 700 & ingreso_i > 5000, 5000,
+    tasa_adjust <- ifelse(score_buro_i > 700 & ingreso_i > 5000 & moras_i == 0, -0.02,
+                          ifelse(score_buro_i < 500 | moras_i > 2, 0.03, 0))
+    monto_adjust <- ifelse(score_buro_i > 700 & ingreso_i > 5000, 5000,
                            ifelse(score_buro_i < 500, -5000, 0))
 
-    ofertas_historicas$rate[cliente_rows] <- pmax(0.03, pmin(0.15,
-      ofertas_historicas$rate[cliente_rows] + rate_adjust))
-    ofertas_historicas$amount[cliente_rows] <- pmax(500, pmin(30000,
-      ofertas_historicas$amount[cliente_rows] + amount_adjust))
+    ofertas_historicas$tasa[i] <- pmax(0.03, pmin(0.15,
+      ofertas_historicas$tasa[i] + tasa_adjust))
+    ofertas_historicas$monto_oferta[i] <- pmax(500, pmin(30000,
+      ofertas_historicas$monto_oferta[i] + monto_adjust))
   }
+
+  # Simular Margen Histórico (margen) basado en score, ingreso, moras, RFM, monto_oferta y plazo
+  financieras$margen <- with(financieras, {
+    # Unir con moras, RFM, monto_oferta y plazo
+    moras <- comp_historico$n_moras_previas[match(id_cliente, comp_historico$id_cliente)]
+    rfm_val <- comp_historico$rfm[match(id_cliente, comp_historico$id_cliente)]
+    monto_val <- ofertas_historicas$monto_oferta[match(id_cliente, ofertas_historicas$id_cliente)]
+    plazo_val <- ofertas_historicas$plazo[match(id_cliente, ofertas_historicas$id_cliente)]
+
+    # Factores de riesgo y potencial
+    s_buro <- scale(score_buro)
+    ingreso <- scale(ingreso_verificado)
+    moras_scaled <- scale(moras)
+    rfm_scaled <- scale(rfm_val)
+    monto_scaled <- scale(monto_val)
+    plazo_scaled <- scale(plazo_val)
+
+    # Margen base positivo, con mayor influencia de monto y plazo
+    base_margin <- 5000 + 2000 * (0.5 * s_buro + 0.6 * ingreso - 0.4 * moras_scaled + 0.3 * rfm_scaled) +
+                   1000 * (0.4 * monto_scaled + 0.3 * plazo_scaled)  # Mayor correlación
+
+    # Añadir ruido aleatorio para variabilidad histórica
+    margin_with_noise <- base_margin + rnorm(n_clientes, mean = 0, sd = 500)
+
+    pmax(100, margin_with_noise)  # asegurar positivo mínimo
+  })
 
   list(
     demograficas      = demograficas,
