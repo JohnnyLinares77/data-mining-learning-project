@@ -199,23 +199,7 @@ mod_m3_ui <- function(id){
                                     choices = c(), selected = c()),
             shiny::actionButton(ns("retrain_model"), "Reentrenar modelo con variables seleccionadas"),
             shiny::br(), shiny::br(),
-            shiny::verbatimTextOutput(ns("model_final_summary")),
-            shiny::br(),
-            shiny::h5("Interpretación de coeficiente"),
-            shiny::p("Se te ha asignado una variable al azar. Interpreta su coeficiente siguiendo esta guía:"),
-            shiny::tags$ul(
-              shiny::tags$li("Indica si el coeficiente es positivo o negativo"),
-              shiny::tags$li("Explica qué significa un aumento de 1 unidad en la variable para ME"),
-              shiny::tags$li("Menciona si es estadísticamente significativo"),
-              shiny::tags$li("Ejemplo: 'El coeficiente de [variable] es [valor], positivo/significativo, indicando que un aumento de 1 en [variable] aumenta ME en [valor] unidades, con p-valor [p], lo que es significativo/no significativo.'")
-            ),
-            shiny::uiOutput(ns("interp_var_target_m3")),
-            shiny::textAreaInput(ns("interp_text_m3"), "Redacta tu interpretación aquí:",
-                               placeholder = "Escribe tu interpretación del coeficiente asignado...",
-                               rows = 4),
-            shiny::actionButton(ns("interp_enviar_m3"), "Enviar interpretación"),
-            shiny::br(), shiny::br(),
-            shiny::uiOutput(ns("interp_feedback_m3"))
+            shiny::verbatimTextOutput(ns("model_final_summary"))
           ),
 
           # ---- Tab 5: Comparación de Modelos

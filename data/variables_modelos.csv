@@ -130,3 +130,8 @@
 "SIM_20250928_155710","M1","rfm","","","",NA,""
 "SIM_20250928_155710","M1","score_buro","","","",NA,""
 "SIM_20250928_155710","M2",NA,"edad|ingreso_verificado|rfm|score_buro","ingreso_verificado|rfm|score_buro","ingreso_verificado|score_buro|rfm",0.05,"2025-09-28 15:57:46.93431"
+"SIM_20250928_203025","M1","edad","","","",NA,""
+"SIM_20250928_203025","M1","ingreso_declarado","","","",NA,""
+"SIM_20250928_203025","M1","rfm","","","",NA,""
+"SIM_20250928_203025","M1","score_buro","","","",NA,""
+"SIM_20250928_203025","M2",NA,"edad|ingreso_verificado|rfm|score_buro","ingreso_verificado|rfm|score_buro","ingreso_verificado|score_buro|rfm",0.05,"2025-09-28 20:31:21.880153"

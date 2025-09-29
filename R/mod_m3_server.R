@@ -13,32 +13,9 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
   # ----------------------------
   rv <- shiny::reactiveValues(
     metrics = NULL,     # lista con $manual y/o $auto (rmse, r2_adj, alpha, vars)
-    sim_results = NULL, # resultados de simulación (para persistir)
-    cor_data = NULL     # datos procesados para correlaciones (df, vars_valid, vars_in_cor)
+    sim_results = NULL  # resultados de simulación (para persistir)
   )
 
-  # ============================
-  # HELPER: interpretación automática para M3 (regresión lineal)
-  # ============================
-  .build_interpretacion_var_m3 <- function(model, var, alpha = 0.05){
-    s <- summary(model)
-    coefs <- s$coefficients
-    if (!(var %in% rownames(coefs))) {
-      return(list(texto = sprintf("No se encontró coeficiente para '%s'.", var), ok = FALSE))
-    }
-
-    beta <- coefs[var, "Estimate"]
-    pv <- coefs[var, "Pr(>|t|)"]
-    dir <- if (beta >= 0) "aumenta" else "disminuye"
-    sig <- if (is.finite(pv) && pv < alpha) "es significativa" else "no es significativa"
-
-    texto <- sprintf(
-      "El coeficiente de '%s' es %.4f (p = %.4f) y %s: un aumento de 1 unidad en '%s' %s ME en %.4f unidades.",
-      var, beta, pv, sig, var, dir, beta
-    )
-
-    list(texto = texto, ok = is.finite(pv))
-  }
 
   # ----------------------------
   # Actualizar variables disponibles cuando cambien los datos
@@ -610,65 +587,6 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
     shiny::showNotification("Modelo reentrenado con variables seleccionadas", type = "message")
   }, ignoreInit = TRUE)
 
-  # ----------------------------
-  # Asignación aleatoria de variable para interpretación en M3
-  # ----------------------------
-  observeEvent(modelo_manual(), {
-    shiny::req(modelo_manual())
-
-    fit <- modelo_manual()
-    vars_in_model <- names(stats::coef(fit))
-    vars_in_model <- vars_in_model[vars_in_model != "(Intercept)"]
-
-    shiny::validate(shiny::need(length(vars_in_model) > 0, "No hay variables en el modelo para asignar."))
-
-    if (is.null(rv$interp_target_m3) || !(rv$interp_target_m3 %in% vars_in_model)) {
-      set.seed(as.integer(as.numeric(Sys.time())) %% .Machine$integer.max)
-      rv$interp_target_m3 <- sample(vars_in_model, 1)
-    }
-
-    output$interp_var_target_m3 <- shiny::renderUI({
-      shiny::tagList(
-        shiny::p(shiny::strong("Variable asignada:"), rv$interp_target_m3),
-      )
-    })
-
-    shiny::updateTextAreaInput(
-      session, inputId = ns("interp_text_m3"),
-      placeholder = sprintf("Redacta tu interpretación centrada en: '%s'…", rv$interp_target_m3)
-    )
-  })
-
-  # ----------------------------
-  # Validación de interpretación en M3
-  # ----------------------------
-  observeEvent(input$interp_enviar_m3, {
-    shiny::req(modelo_manual(), rv$interp_target_m3)
-
-    fit <- modelo_manual()
-    v_target <- rv$interp_target_m3
-    texto <- trimws(input$interp_text_m3 %||% "")
-    texto_ok <- (nchar(texto) >= 40)  # Validar longitud mínima
-
-    # Generar interpretación automática correcta
-    auto <- .build_interpretacion_var_m3(
-      model = fit,
-      var = v_target,
-      alpha = input$alpha
-    )
-    ref_text <- auto$texto
-
-    output$interp_feedback_m3 <- shiny::renderUI({
-      shiny::tagList(
-        shiny::h5("Reporte de interpretación"),
-        shiny::p(if (texto_ok) sprintf("✓ Interpretación de '%s' recibida", v_target)
-                 else sprintf("✗ Amplía tu interpretación de '%s' (mín. 40 caracteres)", v_target)),
-        shiny::hr(),
-        shiny::strong("Interpretación de referencia (correcta)"),
-        shiny::p(ref_text)
-      )
-    })
-  })
 
   # ----------------------------
   # Modelo automático (stepAIC)
