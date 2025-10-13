@@ -9,6 +9,8 @@ library(ggplot2)  # para gráficos en M3
 library(reshape2) # para melt() en heatmaps de correlación
 library(MASS)     # para stepAIC en M3
 library(car)      # para VIF en análisis de multicolinealidad
+library(rpart)    # para árboles de clasificación en M4
+library(rpart.plot) # para visualización de árboles en M4
 
 # ---- Sourcing: Módulo 1
 source("R/gen_datos.R")
@@ -34,12 +36,19 @@ source("R/persistencia_m3.R")
 source("R/mod_m3_ui.R")
 source("R/mod_m3_server.R")
 
+# ---- Sourcing: Módulo 4 (Árboles de Clasificación)
+source("R/tree_helpers.R")
+source("R/persistencia_m4.R")
+source("R/mod_m4_ui.R")
+source("R/mod_m4_server.R")
+
 # ---------------- UI ----------------
 ui <- navbarPage(
   title = "Simulación Campaña Préstamos",
   tabPanel("Módulo 1: Perfilamiento", mod_m1_ui("m1")),
   tabPanel("Módulo 2: Scoring",       mod_m2_ui("m2")),
   tabPanel("Módulo 3: Pricing",       mod_m3_ui("m3")),
+  tabPanel("Módulo 4: Árboles",       mod_m4_ui("m4")),
   tabPanel("Exportar Datos",
     fluidPage(
       h3("Exportar Datos Simulados"),
@@ -125,6 +134,13 @@ server <- function(input, output, session){
   callModule(
     module = mod_m3_server, id = "m3",
     datos_reactivos = datos_para_m3,  # df con cliente + p_accept/p_mora + oferta
+    id_sim = id_sim
+  )
+
+  # 7) Módulo 4 (Árboles de Clasificación)
+  callModule(
+    module = mod_m4_server, id = "m4",
+    datos_reactivos = reactive(datos),  # misma base simulada
     id_sim = id_sim
   )
 
