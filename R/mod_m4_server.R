@@ -44,21 +44,26 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
   }
 
   # -------------------------
-  # Preparar dataset histórico (interno)
+  # Preparar dataset histórico (interno) - MEJORADO CON LOGS Y VALIDACIONES
   # -------------------------
   prepare_historic_data <- reactive({
+    message("[M4_PREPARE] Iniciando preparación de datos históricos")
+
     # En modo independiente, usar datos históricos simulados completos
     if (execution_mode() == "independent") {
       tryCatch({
         df <- generate_historic_data_m4(n_clientes = 2000, seed = 101112)
         showNotification("Modo independiente: Usando datos históricos simulados para M4", type = "info", duration = 3)
+        message(sprintf("[M4_PREPARE] Modo independiente: %d observaciones generadas", nrow(df)))
       }, error = function(e) {
+        message(sprintf("[M4_PREPARE] ERROR generando datos simulados: %s", conditionMessage(e)))
         showNotification("❌ Error generando datos históricos simulados", type = "error")
         return(NULL)
       })
     } else {
       # Usar datos simulados como "históricos"
       df <- .get_base_df_m4(datos_reactivos())
+      message(sprintf("[M4_PREPARE] Modo secuencial: %d observaciones base", nrow(df)))
 
       # Asegurar que id_cliente sea character
       df$id_cliente <- as.character(df$id_cliente)
@@ -66,13 +71,19 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
       # Crear variable dependiente de alerta de riesgo
       tryCatch({
         df$alerta_riesgo <- .create_alerta_riesgo(df)
+        message("[M4_PREPARE] Variable dependiente creada con .create_alerta_riesgo")
       }, error = function(e) {
         # Fallback si .create_alerta_riesgo no está disponible
         df$alerta_riesgo <- factor(ifelse(df$score_buro < 500 | df$n_moras_previas > 2, "alto",
-                                         ifelse(df$score_buro < 700 | df$n_moras_previas > 0, "medio", "bajo")),
-                                  levels = c("bajo", "medio", "alto"))
+                                          ifelse(df$score_buro < 700 | df$n_moras_previas > 0, "medio", "bajo")),
+                                   levels = c("bajo", "medio", "alto"))
+        message("[M4_PREPARE] Variable dependiente creada con fallback")
       })
     }
+
+    # LOG: Estado inicial de datos
+    message(sprintf("[M4_PREPARE] Datos iniciales: %d filas, %d columnas", nrow(df), ncol(df)))
+    message(sprintf("[M4_PREPARE] Columnas disponibles: %s", paste(names(df), collapse = ", ")))
 
     # Filtrar columnas relevantes: incluir todas las variables predictoras disponibles
     # menos id_cliente y la variable dependiente. Esto permite que el usuario seleccione
@@ -82,34 +93,70 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     vars_disponibles <- c("id_cliente", all_predictor_vars, "alerta_riesgo")
     df <- df[, intersect(vars_disponibles, names(df)), drop = FALSE]
 
+    message(sprintf("[M4_PREPARE] Variables predictoras disponibles: %d (%s)",
+                    length(all_predictor_vars), paste(all_predictor_vars, collapse = ", ")))
+
+    # LOG: NAs antes de remover
+    na_count <- sum(is.na(df))
+    message(sprintf("[M4_PREPARE] Valores NA encontrados: %d", na_count))
+
     # Remover filas con NA
+    df_original <- nrow(df)
     df <- na.omit(df)
+    df_removed <- df_original - nrow(df)
+
+    if (df_removed > 0) {
+      message(sprintf("[M4_PREPARE] Removidas %d filas con NA, quedan %d filas", df_removed, nrow(df)))
+    }
 
     # VALIDACIÓN: Asegurar que tenemos suficientes datos
     if (nrow(df) < 100) {
+      message(sprintf("[M4_PREPARE] ERROR: Datos insuficientes (%d < 100)", nrow(df)))
       showNotification("Datos insuficientes para M4. Se necesitan al menos 100 observaciones.", type = "error")
       return(NULL)
     }
 
     # VALIDACIÓN: Asegurar que alerta_riesgo existe y tiene variación
     if (!"alerta_riesgo" %in% names(df)) {
+      message("[M4_PREPARE] ERROR: Variable dependiente 'alerta_riesgo' no encontrada")
       showNotification("Variable dependiente 'alerta_riesgo' no encontrada.", type = "error")
       return(NULL)
     }
 
-    if (length(unique(df$alerta_riesgo)) < 2) {
+    unique_classes <- length(unique(df$alerta_riesgo))
+    class_dist <- table(df$alerta_riesgo)
+    message(sprintf("[M4_PREPARE] Variable dependiente: %d clases únicas - %s",
+                    unique_classes, paste(names(class_dist), class_dist, sep = "=", collapse = ", ")))
+
+    if (unique_classes < 2) {
+      message("[M4_PREPARE] ERROR: Variable dependiente tiene menos de 2 clases")
       showNotification("La variable 'alerta_riesgo' no tiene suficiente variación.", type = "error")
       return(NULL)
     }
 
+    # Verificar variabilidad de variables predictoras críticas
+    critical_vars <- c("score_buro", "n_moras_previas", "edad", "ingreso_verificado")
+    for (var in critical_vars) {
+      if (var %in% names(df)) {
+        var_unique <- length(unique(df[[var]]))
+        message(sprintf("[M4_PREPARE] Variable crítica '%s': %d valores únicos", var, var_unique))
+        if (var_unique < 3) {
+          warning(sprintf("[M4_PREPARE] WARNING: Variable crítica '%s' tiene baja variabilidad (%d)", var, var_unique))
+        }
+      }
+    }
+
     rv$df_historico <- df
+    message("[M4_PREPARE] Preparación completada exitosamente")
     df
   })
 
   # -------------------------
-  # Entrenar modelo (Paso 1)
+  # Entrenar modelo (Paso 1) - MEJORADO CON LOGS Y VALIDACIONES PREVENTIVAS
   # -------------------------
   observeEvent(input$entrenar_modelo, {
+    message("[M4_TRAIN] Iniciando entrenamiento de modelo")
+
     # Mostrar progreso
     progress <- shiny::Progress$new()
     progress$set(message = "Entrenando modelo...", value = 0.1)
@@ -121,27 +168,36 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
 
     # VALIDACIÓN: Verificar que prepare_historic_data retornó datos válidos
     if (is.null(df_hist) || nrow(df_hist) < 100) {
+      message("[M4_TRAIN] ERROR: Datos históricos inválidos o insuficientes")
       showNotification("❌ Error en preparación de datos históricos. Verifica la configuración.", type = "error")
       return(NULL)
     }
 
-    # No actualizar dinámicamente la lista de variables; mantener la selección del usuario.
+    message(sprintf("[M4_TRAIN] Datos preparados: %d observaciones, %d variables", nrow(df_hist), ncol(df_hist)))
 
     # Verificar que las variables seleccionadas están disponibles
     selected_vars <- intersect(input$vars_predictoras, names(df_hist))
     if (length(selected_vars) == 0) {
+      message("[M4_TRAIN] ERROR: Ninguna variable seleccionada disponible")
       showNotification("❌ Ninguna de las variables seleccionadas está disponible en los datos.", type = "error")
       return(NULL)
     }
 
+    message(sprintf("[M4_TRAIN] Variables seleccionadas disponibles: %d/%d (%s)",
+                    length(selected_vars), length(input$vars_predictoras),
+                    paste(selected_vars, collapse = ", ")))
+
+    # Validar variables seleccionadas
     val <- validar_variables(selected_vars)
     if(!val$ok){
+      message(sprintf("[M4_TRAIN] ERROR en validación de variables: %s", val$msg))
       showNotification(val$msg, type = "error")
       return(invisible(NULL))
     }
 
     # VALIDACIÓN: Asegurar que tenemos la variable dependiente
     if (!input$var_dependiente %in% names(df_hist)) {
+      message(sprintf("[M4_TRAIN] ERROR: Variable dependiente '%s' no encontrada", input$var_dependiente))
       showNotification(sprintf("Variable dependiente '%s' no encontrada en los datos.", input$var_dependiente), type = "error")
       return(NULL)
     }
@@ -150,11 +206,16 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     vars_para_modelo <- c("id_cliente", selected_vars, input$var_dependiente)
     df_modelo <- df_hist[, vars_para_modelo, drop = FALSE]
 
+    message(sprintf("[M4_TRAIN] Dataset modelo: %d filas, %d columnas", nrow(df_modelo), ncol(df_modelo)))
+
     # VALIDACIÓN: Verificar que no hay NAs en el dataset final
-    if (any(is.na(df_modelo))) {
+    na_count <- sum(is.na(df_modelo))
+    if (na_count > 0) {
+      message(sprintf("[M4_TRAIN] WARNING: %d valores NA encontrados, removiendo filas", na_count))
       showNotification("Hay valores faltantes en el dataset. Limpiando datos...", type = "warning")
       df_modelo <- na.omit(df_modelo)
       if (nrow(df_modelo) < 100) {
+        message(sprintf("[M4_TRAIN] ERROR: Después de remover NA quedan %d filas (< 100)", nrow(df_modelo)))
         showNotification("Después de remover NAs, quedan muy pocos datos.", type = "error")
         return(NULL)
       }
@@ -166,8 +227,12 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     rv$train_data <- df_modelo[train_idx, ]
     rv$test_data <- df_modelo[-train_idx, ]
 
+    message(sprintf("[M4_TRAIN] División train/test: %d train, %d test",
+                    nrow(rv$train_data), nrow(rv$test_data)))
+
     # VALIDACIÓN: Verificar que tenemos datos en train y test
     if (nrow(rv$train_data) == 0 || nrow(rv$test_data) == 0) {
+      message("[M4_TRAIN] ERROR: División train/test fallida")
       showNotification("Error al dividir datos en train/test.", type = "error")
       return(NULL)
     }
@@ -177,24 +242,29 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     tryCatch({
       rv$tree_model <- train_tree(rv$train_data, selected_vars, input$var_dependiente)
       if (is.null(rv$tree_model)) {
+        message("[M4_TRAIN] ERROR: train_tree retornó NULL")
         showNotification("❌ Error al entrenar el modelo de árbol.", type = "error")
         return(NULL)
       }
 
       # VALIDACIÓN: Verificar que el modelo se entrenó correctamente
       if (is.null(rv$tree_model$frame) || nrow(rv$tree_model$frame) == 0) {
+        message("[M4_TRAIN] ERROR: Modelo sin estructura válida")
         showNotification("❌ El modelo entrenado no tiene estructura válida.", type = "error")
         return(NULL)
       }
 
       # Verificar que hay al menos algunos nodos terminales
       n_terminal <- sum(rv$tree_model$frame$var == "<leaf>")
+      message(sprintf("[M4_TRAIN] Modelo entrenado: %d nodos terminales", n_terminal))
       if (n_terminal == 0) {
+        message("[M4_TRAIN] ERROR: Modelo sin nodos terminales")
         showNotification("❌ El modelo no generó nodos terminales.", type = "error")
         return(NULL)
       }
 
     }, error = function(e) {
+      message(sprintf("[M4_TRAIN] ERROR en train_tree: %s", e$message))
       showNotification(sprintf("❌ Error en train_tree: %s", substr(e$message, 1, 100)), type = "error")
       return(NULL)
     })
@@ -202,6 +272,7 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     progress$set(value = 0.9, detail = "Finalizando...")
 
     rv$modelo_entrenado <- TRUE
+    message("[M4_TRAIN] Entrenamiento completado exitosamente")
 
     output$mensaje_entrenamiento <- renderUI({
       # Obtener información del modelo entrenado
@@ -427,7 +498,8 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     df_comp <- data.frame(
       Árbol = c("Original", "Podado"),
       "Nodos Terminales" = c(original_size, pruned_size),
-      "Accuracy Test" = c(acc_original, acc_pruned)
+      "Accuracy Test" = c(acc_original, acc_pruned),
+      check.names = FALSE
     )
 
     DT::datatable(df_comp, options = list(dom = "t", paging = FALSE)) %>%

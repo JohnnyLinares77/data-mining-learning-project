@@ -14,23 +14,17 @@ mod_m4_ui <- function(id){
         width = 3,
         h3("Inputs"),
         tags$strong("Variables predictoras"),
-        helpText("💡 Selecciona exactamente 8 variables para entrenar el modelo de árbol."),
+        helpText("💡 Selecciona exactamente 12 variables para entrenar el modelo de árbol."),
         checkboxGroupInput(
           inputId = ns("vars_predictoras"),
           label   = NULL,
           choices = c(
-            # Demográficas
-            "edad","estado_civil","ubicacion","nivel_educativo",
-            "tipo_ocupacion","rubro_laboral","n_dependientes",
-            # Históricas
-            "antiguedad_cliente","n_moras_previas","dias_atraso_max",
-            "productos_activos","frecuencia_uso","cancelaciones_anticip",
-            "rfm",
-            # Financieras
-            "ingreso_declarado","ingreso_verificado","capacidad_endeud",
-            "endeudamiento_total","score_buro"
+            # Variables principales para demostración (8 variables clave)
+            "score_buro","n_moras_previas","dias_atraso_max","endeudamiento_total",
+            "rfm","antiguedad_cliente","productos_activos","ingreso_verificado"
           ),
-          selected = c("edad","ingreso_verificado","score_buro","rfm","n_moras_previas","endeudamiento_total")
+          selected = c("score_buro","n_moras_previas","dias_atraso_max","endeudamiento_total",
+                      "rfm","antiguedad_cliente","productos_activos","ingreso_verificado")
         ),
         tags$hr(),
         tags$strong("Variable dependiente"),

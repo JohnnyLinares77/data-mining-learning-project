@@ -42,7 +42,6 @@ source("R/mod_m3_server.R")
 # ---- Sourcing: Módulo 4 - Árboles de Clasificación
 source("R/tree_helpers.R")
 source("R/persistencia_m4.R")
-source("R/independent_mode_helpers.R")
 source("R/mod_m4_ui.R")
 source("R/mod_m4_server.R")
 
