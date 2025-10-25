@@ -152,27 +152,6 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
       return(invisible(NULL))
     }
 
-    # VALIDACIÓN: Verificar que prepare_historic_data retornó datos válidos
-    if (is.null(df_hist) || nrow(df_hist) < 100) {
-      showNotification("❌ Error en preparación de datos históricos. Verifica la configuración.", type = "error")
-      return(NULL)
-    }
-
-    # En modo independiente, actualizar las opciones de variables disponibles
-    if (execution_mode() == "independent") {
-      available_vars <- names(df_hist)[!names(df_hist) %in% c("id_cliente", "alerta_riesgo")]
-      updateCheckboxGroupInput(session, "vars_predictoras",
-                              choices = available_vars,
-                              selected = intersect(input$vars_predictoras, available_vars))
-    }
-
-    # Verificar que las variables seleccionadas están disponibles
-    selected_vars <- intersect(input$vars_predictoras, names(df_hist))
-    if (length(selected_vars) == 0) {
-      showNotification("❌ Ninguna de las variables seleccionadas está disponible en los datos.", type = "error")
-      return(NULL)
-    }
-
     # VALIDACIÓN: Asegurar que tenemos la variable dependiente
     if (!input$var_dependiente %in% names(df_hist)) {
       showNotification(sprintf("Variable dependiente '%s' no encontrada en los datos.", input$var_dependiente), type = "error")

@@ -1,5 +1,8 @@
 # R/tree_helpers.R
-# ---- Árboles de Clasificación con rpart
+# -------------------------------------------------------------------
+# Funciones auxiliares para Árboles de Clasificación con rpart
+# Maneja entrenamiento, poda y evaluación de modelos de árbol
+# -------------------------------------------------------------------
 
 # Función para crear variable dependiente de alerta de riesgo
 .create_alerta_riesgo <- function(df) {
@@ -21,7 +24,15 @@
   factor(riesgo_combinado, levels = c("bajo", "medio", "alto"))
 }
 
-# Entrenar árbol de clasificación
+# -------------------------------------------------------------------
+# train_tree: Entrena un modelo de árbol de clasificación
+# Args:
+#   df: DataFrame con datos de entrenamiento
+#   vars_predictoras: Vector de nombres de variables predictoras
+#   var_dependiente: Nombre de la variable dependiente (default: "alerta_riesgo")
+# Returns:
+#   Objeto rpart con el modelo entrenado
+# -------------------------------------------------------------------
 train_tree <- function(df, vars_predictoras, var_dependiente = "alerta_riesgo") {
   # Crear variable dependiente si no existe
   if (!var_dependiente %in% names(df)) {

@@ -1,42 +1,45 @@
 
-# ---- Dependencias
+# ---- Dependencias principales
 library(shiny)
 library(DT)
-library(cluster)  # para distancia/silueta en M1
-library(pROC)     # para AUC en M2
 library(shinyjs)
-library(ggplot2)  # para gráficos en M3
-library(reshape2) # para melt() en heatmaps de correlación
-library(MASS)     # para stepAIC en M3
-library(car)      # para VIF en análisis de multicolinealidad
-library(rpart)    # para árboles de clasificación en M4
-library(rpart.plot) # para visualización de árboles en M4
 
-# ---- Sourcing: Módulo 1
+# ---- Dependencias específicas por módulo
+library(cluster)      # M1: distancia/silueta
+library(pROC)         # M2: AUC
+library(ggplot2)      # M3: gráficos
+library(reshape2)     # M3: melt() en heatmaps
+library(MASS)         # M3: stepAIC
+library(car)          # M3: VIF multicolinealidad
+library(rpart)        # M4: árboles de clasificación
+library(rpart.plot)   # M4: visualización de árboles
+
+# ---- Sourcing de funciones auxiliares
+source("R/utils_validaciones.R")
+source("R/feedback_rules.R")
+source("R/export_helpers.R")
+
+# ---- Sourcing: Módulo 1 - Perfilamiento
 source("R/gen_datos.R")
 source("R/preprocess.R")
 source("R/pca_helpers.R")
 source("R/kmeans_helpers.R")
 source("R/persistencia.R")
-source("R/utils_validaciones.R")
-source("R/feedback_rules.R")
-source("R/export_helpers.R")
 source("R/mod_m1_ui.R")
 source("R/mod_m1_server.R")
 
-# ---- Sourcing: Módulo 2 (Scoring - Regresión Logística)
+# ---- Sourcing: Módulo 2 - Scoring (Regresión Logística)
 source("R/logit_helpers.R")
 source("R/persistencia_m2.R")
 source("R/mod_m2_ui.R")
 source("R/mod_m2_server.R")
 
-# ---- Sourcing: Módulo 3 (Pricing y Elasticidad)
-# Asegúrate de colocar estos archivos en R/ tal como hiciste con M1 y M2
+# ---- Sourcing: Módulo 3 - Pricing y Elasticidad
 source("R/persistencia_m3.R")
 source("R/mod_m3_ui.R")
 source("R/mod_m3_server.R")
 
-# ---- Sourcing: Módulo 4 (Árboles de Clasificación)
+# ---- Sourcing: Módulo 4 - Árboles de Clasificación
 source("R/tree_helpers.R")
 source("R/persistencia_m4.R")
 source("R/independent_mode_helpers.R")
