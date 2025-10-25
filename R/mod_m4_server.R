@@ -175,17 +175,23 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
 
     message(sprintf("[M4_TRAIN] Datos preparados: %d observaciones, %d variables", nrow(df_hist), ncol(df_hist)))
 
-    # Verificar que las variables seleccionadas están disponibles
-    selected_vars <- intersect(input$vars_predictoras, names(df_hist))
-    if (length(selected_vars) == 0) {
-      message("[M4_TRAIN] ERROR: Ninguna variable seleccionada disponible")
-      showNotification("❌ Ninguna de las variables seleccionadas está disponible en los datos.", type = "error")
+    # Verificar que se seleccionaron exactamente 8 variables
+    if (length(input$vars_predictoras) != 8) {
+      message(sprintf("[M4_TRAIN] ERROR: Se deben seleccionar exactamente 8 variables, seleccionadas: %d", length(input$vars_predictoras)))
+      showNotification("❌ Debes seleccionar exactamente 8 variables para entrenar el modelo.", type = "error")
       return(NULL)
     }
 
-    message(sprintf("[M4_TRAIN] Variables seleccionadas disponibles: %d/%d (%s)",
-                    length(selected_vars), length(input$vars_predictoras),
-                    paste(selected_vars, collapse = ", ")))
+    # Verificar que las variables seleccionadas están disponibles
+    selected_vars <- intersect(input$vars_predictoras, names(df_hist))
+    if (length(selected_vars) != 8) {
+      message("[M4_TRAIN] ERROR: Algunas variables seleccionadas no están disponibles")
+      showNotification("❌ Algunas de las variables seleccionadas no están disponibles en los datos.", type = "error")
+      return(NULL)
+    }
+
+    message(sprintf("[M4_TRAIN] Variables seleccionadas disponibles: %d (%s)",
+                    length(selected_vars), paste(selected_vars, collapse = ", ")))
 
     # Validar variables seleccionadas
     val <- validar_variables(selected_vars)
@@ -237,10 +243,15 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
       return(NULL)
     }
 
-    # Entrenar árbol con las variables verificadas
+    # Entrenar árbol con parámetros de pre-poda del UI (por defecto: sobreajuste didáctico)
     progress$set(value = 0.5, detail = "Entrenando modelo...")
     tryCatch({
-      rv$tree_model <- train_tree(rv$train_data, selected_vars, input$var_dependiente)
+      rv$tree_model <- train_tree(
+        rv$train_data, selected_vars, input$var_dependiente,
+        minsplit = input$minsplit %||% 2,
+        maxdepth = input$maxdepth %||% 20,
+        cp_pre   = input$cp_pre   %||% 0
+      )
       if (is.null(rv$tree_model)) {
         message("[M4_TRAIN] ERROR: train_tree retornó NULL")
         showNotification("❌ Error al entrenar el modelo de árbol.", type = "error")
@@ -275,19 +286,15 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     message("[M4_TRAIN] Entrenamiento completado exitosamente")
 
     output$mensaje_entrenamiento <- renderUI({
-      # Obtener información del modelo entrenado
-      n_vars_used <- length(unique(rv$tree_model$frame$var[rv$tree_model$frame$var != "<leaf>"]))
-      n_terminal <- sum(rv$tree_model$frame$var == "<leaf>")
-
+      used <- tryCatch(variables_usadas(rv$tree_model), error = function(e) character(0))
       div(class = "alert alert-success",
-          h4("✅ Modelo Entrenado Exitosamente"),
-          p(sprintf("• Observaciones de entrenamiento: %d", nrow(rv$train_data))),
-          p(sprintf("• Observaciones de prueba: %d", nrow(rv$test_data))),
-          p(sprintf("• Variables seleccionadas por usuario: %d", length(selected_vars))),
-          p(sprintf("• Variables efectivamente usadas en el modelo: %d", n_vars_used)),
-          p(sprintf("• Nodos terminales generados: %d", n_terminal)),
-          hr(),
-          strong("Variables usadas en el modelo: "), paste(selected_vars, collapse = ", "))
+          paste0(
+            "Modelo entrenado exitosamente con ", nrow(rv$train_data),
+            " observaciones de entrenamiento y ", nrow(rv$test_data), " de prueba. ",
+            "Variables seleccionadas: ", paste(selected_vars, collapse = ", "), ". ",
+            "Variables efectivamente usadas por el árbol: ",
+            if (length(used)) paste(used, collapse = ", ") else "(ninguna adicional)"
+          ))
     })
 
     progress$set(value = 1.0, detail = "Completado")
@@ -425,6 +432,16 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
          "Tamaño Óptimo", pos = 4, col = "red")
   })
 
+  # Selector dinámico de CP para poda manual
+  output$cp_selector <- renderUI({
+    req(rv$tree_model)
+    tb <- rpart::printcp(rv$tree_model)
+    cps <- as.numeric(tb[, "CP"])
+    default_cp <- cps[which.min(tb[, "xerror"])]
+    sliderInput(ns("cp_prune"), "Selecciona CP para podar",
+                min = min(cps), max = max(cps), value = default_cp, step = diff(range(cps))/100)
+  })
+
   # Información de poda
   output$info_poda <- renderUI({
     req(rv$tree_model)
@@ -440,11 +457,19 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     )
   })
 
-  # Aplicar poda
+  # Aplicar poda (usa CP del slider si existe)
   observeEvent(input$aplicar_poda, {
     req(rv$tree_model)
 
-    poda_result <- prune_tree(rv$tree_model, rv$train_data)
+    cp_to_use <- tryCatch(input$cp_prune, error = function(e) NULL)
+    if (!is.null(cp_to_use)) {
+      pruned <- rpart::prune(rv$tree_model, cp = cp_to_use)
+      poda_result <- list(original = rv$tree_model, pruned = pruned,
+                          cp_optimal = cp_to_use, cv_results = rpart::printcp(rv$tree_model))
+    } else {
+      # fallback: cp óptimo automático
+      poda_result <- prune_tree(rv$tree_model, rv$train_data)
+    }
     rv$pruned_model <- poda_result$pruned
     rv$poda_info <- poda_result
 

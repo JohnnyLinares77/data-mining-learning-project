@@ -14,18 +14,25 @@ mod_m4_ui <- function(id){
         width = 3,
         h3("Inputs"),
         tags$strong("Variables predictoras"),
-        helpText("💡 Selecciona exactamente 12 variables para entrenar el modelo de árbol."),
+        helpText("💡 Selecciona exactamente 8 variables para entrenar el modelo de árbol."),
         checkboxGroupInput(
           inputId = ns("vars_predictoras"),
           label   = NULL,
           choices = c(
-            # Variables principales para demostración (8 variables clave)
+            # Variables principales para demostración
             "score_buro","n_moras_previas","dias_atraso_max","endeudamiento_total",
-            "rfm","antiguedad_cliente","productos_activos","ingreso_verificado"
+            "rfm","antiguedad_cliente","productos_activos","ingreso_verificado",
+            "frecuencia_uso","edad","sexo","estado_civil","nivel_educativo","tipo_vivienda"
           ),
           selected = c("score_buro","n_moras_previas","dias_atraso_max","endeudamiento_total",
                       "rfm","antiguedad_cliente","productos_activos","ingreso_verificado")
         ),
+        tags$hr(),
+        tags$strong("Pre-poda (opcional)"),
+        tags$small("Deja valores por defecto para provocar un árbol grande y luego podar."),
+        numericInput(ns("minsplit"), "minsplit", value = 2, min = 2, max = 50, step = 1),
+        numericInput(ns("maxdepth"), "maxdepth", value = 20, min = 1, max = 30, step = 1),
+        numericInput(ns("cp_pre"),   "cp (pre-poda)", value = 0, min = 0, max = 0.05, step = 0.001),
         tags$hr(),
         tags$strong("Variable dependiente"),
         selectInput(
@@ -155,11 +162,10 @@ mod_m4_ui <- function(id){
             actionButton(ns("validar_grafico"), "Validar Interpretación"),
             uiOutput(ns("feedback_grafico")),
             br(),
-            h4("Aplicar Poda"),
-            p("Una vez comprendido el proceso, el sistema aplicará la poda óptima."),
-            uiOutput(ns("info_poda")),
-            actionButton(ns("aplicar_poda"), "Aplicar Poda",
-                         class = "btn-warning"),
+            hr(),
+            # Selector CP generado desde server (en base a cptable)
+            uiOutput(ns("cp_selector")),
+            actionButton(ns("aplicar_poda"), "Aplicar Poda", class = "btn-warning"),
             br(), br(),
             h4("Visualización Antes y Después + Métricas de Rendimiento"),
             fluidRow(

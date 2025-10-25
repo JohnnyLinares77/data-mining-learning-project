@@ -4,24 +4,24 @@
 # Maneja entrenamiento, poda y evaluación de modelos de árbol
 # -------------------------------------------------------------------
 
-# Función para crear variable dependiente de alerta de riesgo
+# Función para crear variable dependiente de alerta de riesgo (más variables y ruido)
 .create_alerta_riesgo <- function(df) {
-  # Crear alerta de riesgo basada en score_buro, moras y RFM
-  # score_buro: < 500 -> alto riesgo, 500-700 -> medio, >700 -> bajo
-  riesgo_score <- cut(df$score_buro,
-                     breaks = c(-Inf, 500, 700, Inf),
-                     labels = c("alto", "medio", "bajo"))
-
-  # moras: >2 -> alto, 1-2 -> medio, 0 -> bajo
-  riesgo_moras <- cut(df$n_moras_previas,
-                     breaks = c(-Inf, 0, 2, Inf),
-                     labels = c("bajo", "medio", "alto"))
-
-  # Combinar riesgos
-  riesgo_combinado <- ifelse(riesgo_score == "alto" | riesgo_moras == "alto", "alto",
-                            ifelse(riesgo_score == "medio" | riesgo_moras == "medio", "medio", "bajo"))
-
-  factor(riesgo_combinado, levels = c("bajo", "medio", "alto"))
+  z <- function(x) as.numeric(scale(x))
+  s <- 0
+  if ("score_buro" %in% names(df))            s <- s - 0.7 * z(df$score_buro)
+  if ("n_moras_previas" %in% names(df))       s <- s + 0.8 * z(df$n_moras_previas)
+  if ("dias_atraso_max" %in% names(df))       s <- s + 0.5 * z(df$dias_atraso_max)
+  if ("endeudamiento_total" %in% names(df))   s <- s + 0.5 * z(df$endeudamiento_total)
+  if ("ingreso_verificado" %in% names(df))    s <- s - 0.6 * z(df$ingreso_verificado)
+  if ("rfm" %in% names(df))                   s <- s - 0.3 * z(df$rfm)
+  if ("productos_activos" %in% names(df))     s <- s - 0.2 * z(df$productos_activos)
+  if ("antiguedad_cliente" %in% names(df))    s <- s - 0.2 * z(df$antiguedad_cliente)
+  if ("frecuencia_uso" %in% names(df))        s <- s - 0.2 * z(df$frecuencia_uso)
+  # ruido para evitar ties y baja variabilidad
+  s <- s + stats::rnorm(nrow(df), 0, 0.5)
+  q <- stats::quantile(s, probs = c(1/3, 2/3), na.rm = TRUE)
+  out <- cut(s, breaks = c(-Inf, q[1], q[2], Inf), labels = c("bajo","medio","alto"))
+  factor(out, levels = c("bajo","medio","alto"))
 }
 
 # -------------------------------------------------------------------
@@ -33,7 +33,8 @@
 # Returns:
 #   Objeto rpart con el modelo entrenado
 # -------------------------------------------------------------------
-train_tree <- function(df, vars_predictoras, var_dependiente = "alerta_riesgo") {
+train_tree <- function(df, vars_predictoras, var_dependiente = "alerta_riesgo",
+                       minsplit = 2, minbucket = 1, maxdepth = 30, cp_pre = 0) {
   # LOG: Inicio de entrenamiento
   message(sprintf("[TRAIN_TREE] Iniciando entrenamiento con %d observaciones", nrow(df)))
 
@@ -102,24 +103,14 @@ train_tree <- function(df, vars_predictoras, var_dependiente = "alerta_riesgo") 
     }
   }
 
-  # Entrenar árbol con rpart. Ajustar parámetros de control para permitir que el modelo
-  # explore más divisiones y utilice más variables. Se reducen los requisitos de tamaño de
-  # muestra por división y el parámetro de complejidad para generar un árbol más profundo.
-  message("[TRAIN_TREE] Entrenando modelo rpart...")
+  # Entrenar árbol con rpart — pre-poda mínima por defecto (sobreajuste didáctico)
   tree_model <- rpart::rpart(
-    formula,
-    data = df,
-    method = "class",
+    formula, data = df, method = "class",
     control = rpart::rpart.control(
-      minsplit = 5,     # Más permisivo: divisiones con al menos 5 observaciones
-      minbucket = 2,    # Hojas más pequeñas: al menos 2 observaciones
-      cp = 0.0001,      # Mucho más complejo: permitir más divisiones
-      maxdepth = 12,    # Más profundidad: hasta 12 niveles
-      maxcompete = 10,  # Considerar más competidores por división
-      maxsurrogate = 5  # Usar variables sustitutas para mejorar uso de variables
-    ),
-    model = TRUE
-  )  # IMPORTANTE: Guardar datos del modelo para rpart.plot
+      minsplit = minsplit, minbucket = minbucket,
+      maxdepth = maxdepth, cp = cp_pre, xval = 10
+    )
+  )
 
   # LOG: Resultados del entrenamiento
   if (!is.null(tree_model$frame) && nrow(tree_model$frame) > 0) {
@@ -450,4 +441,9 @@ classify_new_data <- function(tree_model, new_data) {
   message("[CLASSIFY] Clasificación completada exitosamente")
 
   results
+}
+
+# Variables efectivamente usadas por el árbol
+variables_usadas <- function(tree_model){
+  unique(tree_model$frame$var[tree_model$frame$var != "<leaf>"])
 }
