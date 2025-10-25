@@ -77,12 +77,8 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     # Filtrar columnas relevantes - incluir todas las variables predictoras disponibles
     # para que el usuario pueda seleccionarlas
     all_predictor_vars <- c(
-      "edad","estado_civil","ubicacion","nivel_educativo",
-      "tipo_ocupacion","rubro_laboral","n_dependientes",
-      "antiguedad_cliente","n_moras_previas","dias_atraso_max",
-      "productos_activos","frecuencia_uso","cancelaciones_anticip",
       "rfm","ingreso_declarado","ingreso_verificado","capacidad_endeud",
-      "endeudamiento_total","score_buro","tendencia_ingresos"
+      "endeudamiento_total","score_buro"
     )
 
     vars_disponibles <- c("id_cliente", all_predictor_vars, "alerta_riesgo")
