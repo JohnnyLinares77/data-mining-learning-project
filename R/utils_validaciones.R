@@ -1,6 +1,9 @@
 # R/utils_validaciones.R
 validar_variables <- function(vars){
-  if(length(vars) < 1) return(list(ok = FALSE, msg = "Seleccione al menos 1 variable."))
+  # Validar que se seleccione exactamente 8 variables.
+  if (length(vars) != 8) {
+    return(list(ok = FALSE, msg = "Seleccione exactamente 8 variables para entrenar el árbol."))
+  }
   list(ok = TRUE, msg = "")
 }
 

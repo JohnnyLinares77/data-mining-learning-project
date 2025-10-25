@@ -62,17 +62,23 @@ train_tree <- function(df, vars_predictoras, var_dependiente = "alerta_riesgo") 
   formula_str <- paste(var_dependiente, "~", paste(vars_predictoras, collapse = " + "))
   formula <- as.formula(formula_str)
 
-  # Entrenar árbol con rpart - parámetros más conservadores para estabilidad
-  tree_model <- rpart::rpart(formula, data = df, method = "class",
-                            control = rpart::rpart.control(
-                              minsplit = 20,      # Mínimo 20 observaciones para dividir
-                              minbucket = 10,     # Mínimo 10 observaciones por hoja
-                              cp = 0.01,          # Parámetro de complejidad más restrictivo
-                              maxdepth = 5,       # Máximo 5 niveles de profundidad
-                              maxcompete = 3,     # Máximo 3 competidores por división
-                              maxsurrogate = 2   # Máximo 2 surrogates
-                            ),
-                            model = TRUE)  # IMPORTANTE: Guardar datos del modelo para rpart.plot
+  # Entrenar árbol con rpart. Ajustar parámetros de control para permitir que el modelo
+  # explore más divisiones y utilice más variables. Se reducen los requisitos de tamaño de
+  # muestra por división y el parámetro de complejidad para generar un árbol más profundo.
+  tree_model <- rpart::rpart(
+    formula,
+    data = df,
+    method = "class",
+    control = rpart::rpart.control(
+      minsplit = 10,    # Permitir divisiones con al menos 10 observaciones
+      minbucket = 5,    # Permitir hojas con al menos 5 observaciones
+      cp = 0.001,       # Reducir parámetro de complejidad para permitir más divisiones
+      maxdepth = 10,    # Permitir hasta 10 niveles de profundidad en el árbol
+      maxcompete = 0,   # No limitar competidores en cada división
+      maxsurrogate = 0  # No usar variables sustitutas
+    ),
+    model = TRUE
+  )  # IMPORTANTE: Guardar datos del modelo para rpart.plot
 
   return(tree_model)
 }

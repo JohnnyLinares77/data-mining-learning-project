@@ -74,13 +74,11 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
       })
     }
 
-    # Filtrar columnas relevantes - incluir todas las variables predictoras disponibles
-    # para que el usuario pueda seleccionarlas
-    all_predictor_vars <- c(
-      "rfm","ingreso_declarado","ingreso_verificado","capacidad_endeud",
-      "endeudamiento_total","score_buro"
-    )
-
+    # Filtrar columnas relevantes: incluir todas las variables predictoras disponibles
+    # menos id_cliente y la variable dependiente. Esto permite que el usuario seleccione
+    # cualquier combinación de variables y que la lista de opciones no se reduzca después
+    # del entrenamiento.
+    all_predictor_vars <- setdiff(names(df), c("id_cliente", "alerta_riesgo"))
     vars_disponibles <- c("id_cliente", all_predictor_vars, "alerta_riesgo")
     df <- df[, intersect(vars_disponibles, names(df)), drop = FALSE]
 
@@ -127,13 +125,7 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
       return(NULL)
     }
 
-    # En modo independiente, actualizar las opciones de variables disponibles
-    if (execution_mode() == "independent") {
-      available_vars <- names(df_hist)[!names(df_hist) %in% c("id_cliente", "alerta_riesgo")]
-      updateCheckboxGroupInput(session, "vars_predictoras",
-                              choices = available_vars,
-                              selected = intersect(input$vars_predictoras, available_vars))
-    }
+    # No actualizar dinámicamente la lista de variables; mantener la selección del usuario.
 
     # Verificar que las variables seleccionadas están disponibles
     selected_vars <- intersect(input$vars_predictoras, names(df_hist))
@@ -248,15 +240,9 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     }
 
     tryCatch({
-      # MOSTRAR SIEMPRE EL ÁRBOL ORIGINAL PRIMERO
-      # Solo mostrar podado si ya fue aplicado
-      if (!is.null(rv$pruned_model) && rv$poda_aplicada) {
-        rpart.plot::rpart.plot(rv$pruned_model, main = "Árbol de Clasificación Podado",
-                              extra = 104, box.palette = "RdYlGn", shadow.col = "gray", roundint = FALSE)
-      } else {
-        rpart.plot::rpart.plot(rv$tree_model, main = "Árbol de Clasificación Original",
-                              extra = 104, box.palette = "RdYlGn", shadow.col = "gray", roundint = FALSE)
-      }
+      # Mostrar siempre el árbol original en esta pestaña, incluso si ya se aplicó poda.
+      rpart.plot::rpart.plot(rv$tree_model, main = "Árbol de Clasificación Original",
+                            extra = 104, box.palette = "RdYlGn", shadow.col = "gray", roundint = FALSE)
     }, error = function(e) {
       plot.new()
       text(0.5, 0.5, paste("Error al graficar árbol:\n", substr(e$message, 1, 100)), cex = 1.0)
