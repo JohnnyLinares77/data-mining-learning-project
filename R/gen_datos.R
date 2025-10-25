@@ -440,7 +440,9 @@ generate_historic_data_m4 <- function(n_clientes = 2000, seed = 101112) {
 
   # Log final
   message(sprintf("[M4_DATA_GEN] Generación completada: %d observaciones, %d variables predictoras con variabilidad >= 3 niveles",
-                  nrow(df), sum(sapply(df[vars_predictoras], function(x) length(unique(x)) >= 3))))
+                  nrow(df), sum(sapply(df[vars_criticas_m4], function(x) length(unique(x)) >= 3))))
+
+  df
 
   df
 }
