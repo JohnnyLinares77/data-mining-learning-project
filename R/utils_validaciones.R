@@ -1,6 +1,6 @@
 # R/utils_validaciones.R
 validar_variables <- function(vars){
-  if(length(vars) < 2) return(list(ok = FALSE, msg = "Seleccione al menos 2 variables."))
+  if(length(vars) < 1) return(list(ok = FALSE, msg = "Seleccione al menos 1 variable."))
   list(ok = TRUE, msg = "")
 }
 

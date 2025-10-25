@@ -1,7 +1,7 @@
 # R/mod_m4_server.R
 # Server del Módulo 4 – Árboles de Clasificación
 
-mod_m4_server <- function(input, output, session, datos_reactivos, id_sim) {
+mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execution_mode = reactive("sequential")) {
 
   ns <- session$ns
 
@@ -47,14 +47,32 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim) {
   # Preparar dataset histórico (interno)
   # -------------------------
   prepare_historic_data <- reactive({
-    # Usar datos simulados como "históricos"
-    df <- .get_base_df_m4(datos_reactivos())
+    # En modo independiente, usar datos históricos simulados completos
+    if (execution_mode() == "independent") {
+      tryCatch({
+        df <- generate_historic_data_m4(n_clientes = 2000, seed = 101112)
+        showNotification("Modo independiente: Usando datos históricos simulados para M4", type = "info", duration = 3)
+      }, error = function(e) {
+        showNotification("❌ Error generando datos históricos simulados", type = "error")
+        return(NULL)
+      })
+    } else {
+      # Usar datos simulados como "históricos"
+      df <- .get_base_df_m4(datos_reactivos())
 
-    # Asegurar que id_cliente sea character
-    df$id_cliente <- as.character(df$id_cliente)
+      # Asegurar que id_cliente sea character
+      df$id_cliente <- as.character(df$id_cliente)
 
-    # Crear variable dependiente de alerta de riesgo
-    df$alerta_riesgo <- .create_alerta_riesgo(df)
+      # Crear variable dependiente de alerta de riesgo
+      tryCatch({
+        df$alerta_riesgo <- .create_alerta_riesgo(df)
+      }, error = function(e) {
+        # Fallback si .create_alerta_riesgo no está disponible
+        df$alerta_riesgo <- factor(ifelse(df$score_buro < 500 | df$n_moras_previas > 2, "alto",
+                                         ifelse(df$score_buro < 700 | df$n_moras_previas > 0, "medio", "bajo")),
+                                  levels = c("bajo", "medio", "alto"))
+      })
+    }
 
     # Filtrar columnas relevantes - incluir todas las variables predictoras disponibles
     # para que el usuario pueda seleccionarlas
@@ -73,6 +91,23 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim) {
     # Remover filas con NA
     df <- na.omit(df)
 
+    # VALIDACIÓN: Asegurar que tenemos suficientes datos
+    if (nrow(df) < 100) {
+      showNotification("Datos insuficientes para M4. Se necesitan al menos 100 observaciones.", type = "error")
+      return(NULL)
+    }
+
+    # VALIDACIÓN: Asegurar que alerta_riesgo existe y tiene variación
+    if (!"alerta_riesgo" %in% names(df)) {
+      showNotification("Variable dependiente 'alerta_riesgo' no encontrada.", type = "error")
+      return(NULL)
+    }
+
+    if (length(unique(df$alerta_riesgo)) < 2) {
+      showNotification("La variable 'alerta_riesgo' no tiene suficiente variación.", type = "error")
+      return(NULL)
+    }
+
     rv$df_historico <- df
     df
   })
@@ -81,24 +116,66 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim) {
   # Entrenar modelo (Paso 1)
   # -------------------------
   observeEvent(input$entrenar_modelo, {
-    val <- validar_variables(input$vars_predictoras)
-    if(!val$ok){
-      showNotification(val$msg, type = "error")
-      return(invisible(NULL))
-    }
+    # Mostrar progreso
+    progress <- shiny::Progress$new()
+    progress$set(message = "Entrenando modelo...", value = 0.1)
+    on.exit(progress$close())
 
     # Preparar datos históricos con las variables seleccionadas
+    progress$set(value = 0.2, detail = "Preparando datos...")
     df_hist <- prepare_historic_data()
 
-    if (nrow(df_hist) < 100) {
-      showNotification("Insuficientes datos históricos para entrenar el modelo.", type = "error")
+    # VALIDACIÓN: Verificar que prepare_historic_data retornó datos válidos
+    if (is.null(df_hist) || nrow(df_hist) < 100) {
+      showNotification("❌ Error en preparación de datos históricos. Verifica la configuración.", type = "error")
       return(NULL)
+    }
+
+    # En modo independiente, actualizar las opciones de variables disponibles
+    if (execution_mode() == "independent") {
+      available_vars <- names(df_hist)[!names(df_hist) %in% c("id_cliente", "alerta_riesgo")]
+      updateCheckboxGroupInput(session, "vars_predictoras",
+                              choices = available_vars,
+                              selected = intersect(input$vars_predictoras, available_vars))
     }
 
     # Verificar que las variables seleccionadas están disponibles
     selected_vars <- intersect(input$vars_predictoras, names(df_hist))
     if (length(selected_vars) == 0) {
-      showNotification("Ninguna de las variables seleccionadas está disponible en los datos.", type = "error")
+      showNotification("❌ Ninguna de las variables seleccionadas está disponible en los datos.", type = "error")
+      return(NULL)
+    }
+
+    val <- validar_variables(selected_vars)
+    if(!val$ok){
+      showNotification(val$msg, type = "error")
+      return(invisible(NULL))
+    }
+
+    # VALIDACIÓN: Verificar que prepare_historic_data retornó datos válidos
+    if (is.null(df_hist) || nrow(df_hist) < 100) {
+      showNotification("❌ Error en preparación de datos históricos. Verifica la configuración.", type = "error")
+      return(NULL)
+    }
+
+    # En modo independiente, actualizar las opciones de variables disponibles
+    if (execution_mode() == "independent") {
+      available_vars <- names(df_hist)[!names(df_hist) %in% c("id_cliente", "alerta_riesgo")]
+      updateCheckboxGroupInput(session, "vars_predictoras",
+                              choices = available_vars,
+                              selected = intersect(input$vars_predictoras, available_vars))
+    }
+
+    # Verificar que las variables seleccionadas están disponibles
+    selected_vars <- intersect(input$vars_predictoras, names(df_hist))
+    if (length(selected_vars) == 0) {
+      showNotification("❌ Ninguna de las variables seleccionadas está disponible en los datos.", type = "error")
+      return(NULL)
+    }
+
+    # VALIDACIÓN: Asegurar que tenemos la variable dependiente
+    if (!input$var_dependiente %in% names(df_hist)) {
+      showNotification(sprintf("Variable dependiente '%s' no encontrada en los datos.", input$var_dependiente), type = "error")
       return(NULL)
     }
 
@@ -106,25 +183,77 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim) {
     vars_para_modelo <- c("id_cliente", selected_vars, input$var_dependiente)
     df_modelo <- df_hist[, vars_para_modelo, drop = FALSE]
 
+    # VALIDACIÓN: Verificar que no hay NAs en el dataset final
+    if (any(is.na(df_modelo))) {
+      showNotification("Hay valores faltantes en el dataset. Limpiando datos...", type = "warning")
+      df_modelo <- na.omit(df_modelo)
+      if (nrow(df_modelo) < 100) {
+        showNotification("Después de remover NAs, quedan muy pocos datos.", type = "error")
+        return(NULL)
+      }
+    }
+
     # Dividir en train (80%) y test (20%)
     set.seed(123)
     train_idx <- sample(1:nrow(df_modelo), size = 0.8 * nrow(df_modelo))
     rv$train_data <- df_modelo[train_idx, ]
     rv$test_data <- df_modelo[-train_idx, ]
 
+    # VALIDACIÓN: Verificar que tenemos datos en train y test
+    if (nrow(rv$train_data) == 0 || nrow(rv$test_data) == 0) {
+      showNotification("Error al dividir datos en train/test.", type = "error")
+      return(NULL)
+    }
+
     # Entrenar árbol con las variables verificadas
-    rv$tree_model <- train_tree(rv$train_data, selected_vars, input$var_dependiente)
+    progress$set(value = 0.5, detail = "Entrenando modelo...")
+    tryCatch({
+      rv$tree_model <- train_tree(rv$train_data, selected_vars, input$var_dependiente)
+      if (is.null(rv$tree_model)) {
+        showNotification("❌ Error al entrenar el modelo de árbol.", type = "error")
+        return(NULL)
+      }
+
+      # VALIDACIÓN: Verificar que el modelo se entrenó correctamente
+      if (is.null(rv$tree_model$frame) || nrow(rv$tree_model$frame) == 0) {
+        showNotification("❌ El modelo entrenado no tiene estructura válida.", type = "error")
+        return(NULL)
+      }
+
+      # Verificar que hay al menos algunos nodos terminales
+      n_terminal <- sum(rv$tree_model$frame$var == "<leaf>")
+      if (n_terminal == 0) {
+        showNotification("❌ El modelo no generó nodos terminales.", type = "error")
+        return(NULL)
+      }
+
+    }, error = function(e) {
+      showNotification(sprintf("❌ Error en train_tree: %s", substr(e$message, 1, 100)), type = "error")
+      return(NULL)
+    })
+
+    progress$set(value = 0.9, detail = "Finalizando...")
 
     rv$modelo_entrenado <- TRUE
 
     output$mensaje_entrenamiento <- renderUI({
+      # Obtener información del modelo entrenado
+      n_vars_used <- length(unique(rv$tree_model$frame$var[rv$tree_model$frame$var != "<leaf>"]))
+      n_terminal <- sum(rv$tree_model$frame$var == "<leaf>")
+
       div(class = "alert alert-success",
-          paste0("Modelo entrenado exitosamente con ", nrow(rv$train_data),
-                 " observaciones de entrenamiento y ", nrow(rv$test_data), " de prueba.",
-                 " Variables usadas: ", paste(selected_vars, collapse = ", ")))
+          h4("✅ Modelo Entrenado Exitosamente"),
+          p(sprintf("• Observaciones de entrenamiento: %d", nrow(rv$train_data))),
+          p(sprintf("• Observaciones de prueba: %d", nrow(rv$test_data))),
+          p(sprintf("• Variables seleccionadas por usuario: %d", length(selected_vars))),
+          p(sprintf("• Variables efectivamente usadas en el modelo: %d", n_vars_used)),
+          p(sprintf("• Nodos terminales generados: %d", n_terminal)),
+          hr(),
+          strong("Variables usadas en el modelo: "), paste(selected_vars, collapse = ", "))
     })
 
-    showNotification("Modelo entrenado. Procede a interpretar los nodos.", type = "message")
+    progress$set(value = 1.0, detail = "Completado")
+    showNotification("✅ Modelo entrenado exitosamente. Procede a interpretar los nodos.", type = "message")
     updateTabsetPanel(session, "tabs", selected = "Interpretación de Nodos")
   })
 
@@ -135,13 +264,28 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim) {
   # Visualización del árbol
   output$plot_arbol <- renderPlot({
     req(rv$tree_model)
-    if (!is.null(rv$pruned_model)) {
-      rpart.plot::rpart.plot(rv$pruned_model, main = "Árbol de Clasificación Podado",
-                           extra = 104, box.palette = "RdYlGn", shadow.col = "gray")
-    } else {
-      rpart.plot::rpart.plot(rv$tree_model, main = "Árbol de Clasificación",
-                           extra = 104, box.palette = "RdYlGn", shadow.col = "gray")
+
+    # VALIDACIÓN: Verificar que el modelo tiene la estructura esperada
+    if (is.null(rv$tree_model$frame) || nrow(rv$tree_model$frame) == 0) {
+      plot.new()
+      text(0.5, 0.5, "Modelo de árbol no válido o vacío", cex = 1.2)
+      return()
     }
+
+    tryCatch({
+      # MOSTRAR SIEMPRE EL ÁRBOL ORIGINAL PRIMERO
+      # Solo mostrar podado si ya fue aplicado
+      if (!is.null(rv$pruned_model) && rv$poda_aplicada) {
+        rpart.plot::rpart.plot(rv$pruned_model, main = "Árbol de Clasificación Podado",
+                              extra = 104, box.palette = "RdYlGn", shadow.col = "gray", roundint = FALSE)
+      } else {
+        rpart.plot::rpart.plot(rv$tree_model, main = "Árbol de Clasificación Original",
+                              extra = 104, box.palette = "RdYlGn", shadow.col = "gray", roundint = FALSE)
+      }
+    }, error = function(e) {
+      plot.new()
+      text(0.5, 0.5, paste("Error al graficar árbol:\n", substr(e$message, 1, 100)), cex = 1.0)
+    })
   })
 
   # Validar pregunta teórica
@@ -280,15 +424,25 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim) {
   # Visualización árbol original
   output$plot_arbol_original <- renderPlot({
     req(rv$tree_model)
-    rpart.plot::rpart.plot(rv$tree_model, main = "Árbol Original",
-                         extra = 104, box.palette = "RdYlGn", shadow.col = "gray")
+    tryCatch({
+      rpart.plot::rpart.plot(rv$tree_model, main = "Árbol Original",
+                            extra = 104, box.palette = "RdYlGn", shadow.col = "gray", roundint = FALSE)
+    }, error = function(e) {
+      plot.new()
+      text(0.5, 0.5, paste("Error al graficar árbol original:\n", substr(e$message, 1, 100)), cex = 1.0)
+    })
   })
 
   # Visualización árbol podado
   output$plot_arbol_podado <- renderPlot({
     req(rv$pruned_model)
-    rpart.plot::rpart.plot(rv$pruned_model, main = "Árbol Podado",
-                         extra = 104, box.palette = "RdYlGn", shadow.col = "gray")
+    tryCatch({
+      rpart.plot::rpart.plot(rv$pruned_model, main = "Árbol Podado",
+                            extra = 104, box.palette = "RdYlGn", shadow.col = "gray", roundint = FALSE)
+    }, error = function(e) {
+      plot.new()
+      text(0.5, 0.5, paste("Error al graficar árbol podado:\n", substr(e$message, 1, 100)), cex = 1.0)
+    })
   })
 
   # Tabla comparación

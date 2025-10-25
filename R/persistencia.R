@@ -1,9 +1,15 @@
 # R/persistencia.R
 dir.ensure <- function(path) if(!dir.exists(path)) dir.create(path, recursive = TRUE)
 
-persist_eval_m1 <- function(id_sim, varianza_pca, k, silueta, inercia_total, criterio_k, path="data"){
+# ---- Función auxiliar para marcar modo independiente
+get_persistence_suffix <- function(execution_mode = "sequential") {
+  if (execution_mode == "independent") "_independent" else ""
+}
+
+persist_eval_m1 <- function(id_sim, varianza_pca, k, silueta, inercia_total, criterio_k, path="data", execution_mode="sequential"){
   dir.ensure(path)
-  f <- file.path(path, "eval_m1.csv")
+  suffix <- get_persistence_suffix(execution_mode)
+  f <- file.path(path, paste0("eval_m1", suffix, ".csv"))
   df <- data.frame(id_sim, varianza_pca, k, silueta, inercia_total, criterio_k, stringsAsFactors = FALSE)
   if(file.exists(f)) write.table(df, f, sep=",", row.names=FALSE, col.names=FALSE, append=TRUE)
   else write.table(df, f, sep=",", row.names=FALSE, col.names=TRUE)
@@ -17,9 +23,10 @@ persist_variables_modelos <- function(id_sim, modulo, vars, path="data"){
   else write.table(df, f, sep=",", row.names=FALSE, col.names=TRUE)
 }
 
-persist_clientes_clusters <- function(id_sim, id_cliente, cluster_id, path="data"){
+persist_clientes_clusters <- function(id_sim, id_cliente, cluster_id, path="data", execution_mode="sequential"){
   dir.ensure(path)
-  f <- file.path(path, "clientes_clusters.csv")
+  suffix <- get_persistence_suffix(execution_mode)
+  f <- file.path(path, paste0("clientes_clusters", suffix, ".csv"))
   df <- data.frame(
     id_sim = id_sim,
     id_cliente = as.character(id_cliente),

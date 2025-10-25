@@ -39,12 +39,32 @@ source("R/mod_m3_server.R")
 # ---- Sourcing: Módulo 4 (Árboles de Clasificación)
 source("R/tree_helpers.R")
 source("R/persistencia_m4.R")
+source("R/independent_mode_helpers.R")
 source("R/mod_m4_ui.R")
 source("R/mod_m4_server.R")
 
 # ---------------- UI ----------------
 ui <- navbarPage(
   title = "Simulación Campaña Préstamos",
+  tabPanel("Configuración",
+    fluidPage(
+      h3("Configuración de Ejecución"),
+      p("Selecciona el modo de ejecución de los módulos:"),
+      radioButtons("execution_mode", "Modo de Ejecución:",
+                  choices = c("Secuencial (Módulos dependen entre sí)" = "sequential",
+                             "Independiente (Cada módulo funciona por separado)" = "independent"),
+                  selected = "sequential"),
+      hr(),
+      h4("Modo Seleccionado:"),
+      uiOutput("mode_description"),
+      hr(),
+      p(strong("Nota:"), "En modo independiente, cada módulo genera sus propios datos simulados y puede ejecutarse sin depender de los módulos anteriores."),
+      hr(),
+      actionButton("confirm_config", "Confirmar Configuración",
+                  class = "btn-success btn-lg"),
+      uiOutput("config_status")
+    )
+  ),
   tabPanel("Módulo 1: Perfilamiento", mod_m1_ui("m1")),
   tabPanel("Módulo 2: Scoring",       mod_m2_ui("m2")),
   tabPanel("Módulo 3: Pricing",       mod_m3_ui("m3")),
@@ -67,19 +87,82 @@ server <- function(input, output, session){
   seed       <- 12345L
   n_clientes <- 5000L  # Aumentado para mejor performance y más datos después del filtrado
 
-  # 2) Generación de datos (lista de data.frames) — base común
+  # 2) Estado de configuración
+  config_confirmed <- reactiveVal(FALSE)
+
+  # 3) Modo de ejecución reactivo (solo después de confirmar)
+  execution_mode <- reactive({
+    if (!config_confirmed()) return("sequential")
+    input$execution_mode %||% "sequential"
+  })
+
+  # 3) Generación de datos (lista de data.frames) — base común
   #    gen_datos() devuelve: demograficas, financieras, comp_historico,
   #    post_desembolso, simulacion_meta
   datos <- gen_datos(n_clientes = n_clientes, seed = seed)
 
-  # 3) Módulo 1 (Perfilamiento)
+  # 4) Descripción del modo seleccionado
+  output$mode_description <- renderUI({
+    if (!config_confirmed()) {
+      return(div(class = "alert alert-warning",
+                 h4("⚠️ Configuración Pendiente"),
+                 p("Selecciona un modo de ejecución y confirma la configuración para habilitar los módulos.")))
+    }
+
+    if (execution_mode() == "sequential") {
+      div(class = "alert alert-info",
+          h4("🔗 Modo Secuencial"),
+          p("Los módulos se ejecutan en orden dependiente:"),
+          tags$ul(
+            tags$li("M1 → genera datos base"),
+            tags$li("M2 → usa clusters de M1"),
+            tags$li("M3 → usa scores de M2"),
+            tags$li("M4 → usa datos históricos independientes")
+          )
+      )
+    } else {
+      div(class = "alert alert-success",
+          h4("🔄 Modo Independiente"),
+          p("Cada módulo genera sus propios datos simulados:"),
+          tags$ul(
+            tags$li("M1 → genera datos demográficos y financieros"),
+            tags$li("M2 → simula clusters previos + genera scores"),
+            tags$li("M3 → simula scores previos + genera márgenes"),
+            tags$li("M4 → usa datos históricos simulados completos")
+          )
+      )
+    }
+  })
+
+  # 5) Estado de configuración
+  output$config_status <- renderUI({
+    if (config_confirmed()) {
+      div(class = "alert alert-success",
+          h4("✅ Configuración Confirmada"),
+          p("Ya puedes usar los módulos con el modo seleccionado. Los datos simulados están listos."))
+    } else {
+      div(class = "alert alert-info",
+          h4("⏳ Configuración Pendiente"),
+          p("Haz clic en 'Confirmar Configuración' para habilitar los módulos."))
+    }
+  })
+
+  # 6) Observador para confirmar configuración
+  observeEvent(input$confirm_config, {
+    config_confirmed(TRUE)
+    showNotification("✅ Configuración confirmada. Los módulos están listos para usar.",
+                    type = "message", duration = 5)
+  })
+
+  # 5) Módulo 1 (Perfilamiento)
   callModule(
     module = mod_m1_server, id = "m1",
     datos_reactivos = reactive(datos),  # pasa la misma lista
-    id_sim = id_sim
+    id_sim = id_sim,
+    execution_mode = execution_mode
   )
 
-  # 4) Módulo 2 (Scoring - Regresión Logística)
+  # 6) Módulo 2 (Scoring - Regresión Logística)
   #    Este módulo calcula probabilidades de aceptación y mora y persiste
   #    resultados (eval_m2, clientes_scores). Para enlazar con M3
   #    recomendamos (en mod_m2_server) exponer rv$df_scores en
@@ -87,7 +170,8 @@ server <- function(input, output, session){
   callModule(
     module = mod_m2_server, id = "m2",
     datos_reactivos = reactive(datos),  # misma base simulada
-    id_sim = id_sim
+    id_sim = id_sim,
+    execution_mode = execution_mode
   )
 
   # 5) Preparación del dataset para el Módulo 3 (Pricing)
@@ -130,18 +214,20 @@ server <- function(input, output, session){
     base_cli
   })
 
-  # 6) Módulo 3 (Pricing y Elasticidad)
+  # 7) Módulo 3 (Pricing y Elasticidad)
   callModule(
     module = mod_m3_server, id = "m3",
     datos_reactivos = datos_para_m3,  # df con cliente + p_accept/p_mora + oferta
-    id_sim = id_sim
+    id_sim = id_sim,
+    execution_mode = execution_mode
   )
 
-  # 7) Módulo 4 (Árboles de Clasificación)
+  # 8) Módulo 4 (Árboles de Clasificación)
   callModule(
     module = mod_m4_server, id = "m4",
     datos_reactivos = reactive(datos),  # misma base simulada
-    id_sim = id_sim
+    id_sim = id_sim,
+    execution_mode = execution_mode
   )
 
   # 7) Exportar datos simulados a CSV

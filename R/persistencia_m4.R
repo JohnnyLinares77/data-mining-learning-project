@@ -24,7 +24,8 @@
   })
 }
 
-persist_eval_m4 <- function(id_sim, accuracy, macro_f1, n_nodos, vars_usadas) {
+persist_eval_m4 <- function(id_sim, accuracy, macro_f1, n_nodos, vars_usadas, execution_mode = "sequential") {
+  suffix <- if (execution_mode == "independent") "_independent" else ""
   df <- data.frame(
     timestamp = as.character(Sys.time()),
     id_sim = id_sim,
@@ -33,10 +34,11 @@ persist_eval_m4 <- function(id_sim, accuracy, macro_f1, n_nodos, vars_usadas) {
     n_nodos = n_nodos,
     vars_usadas = vars_usadas
   )
-  .write_append_safe(df, file.path("data", "eval_m4.csv"))
+  .write_append_safe(df, file.path("data", paste0("eval_m4", suffix, ".csv")))
 }
 
-persist_clasificaciones_m4 <- function(id_sim, clasificaciones) {
+persist_clasificaciones_m4 <- function(id_sim, clasificaciones, execution_mode = "sequential") {
+  suffix <- if (execution_mode == "independent") "_independent" else ""
   df <- data.frame(
     timestamp = as.character(Sys.time()),
     id_sim = id_sim,
@@ -47,5 +49,5 @@ persist_clasificaciones_m4 <- function(id_sim, clasificaciones) {
     prob_alto = clasificaciones$prob_alto,
     nivel_alerta = clasificaciones$nivel_alerta
   )
-  .write_append_safe(df, file.path("data", "clasificaciones_m4.csv"))
+  .write_append_safe(df, file.path("data", paste0("clasificaciones_m4", suffix, ".csv")))
 }

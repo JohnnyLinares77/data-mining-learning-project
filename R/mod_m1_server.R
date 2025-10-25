@@ -2,7 +2,7 @@
 # Módulo 1 - Perfilamiento del Cliente
 # Server: orquesta PCA, evaluación de K y clustering; muestra métricas y persiste resultados.
 
-mod_m1_server <- function(input, output, session, datos_reactivos, id_sim){
+mod_m1_server <- function(input, output, session, datos_reactivos, id_sim, execution_mode = reactive("sequential")){
 
   ns <- session$ns
 
@@ -50,9 +50,17 @@ mod_m1_server <- function(input, output, session, datos_reactivos, id_sim){
       return(invisible(NULL))
     }
 
+    # Usar datos independientes si es modo independiente
+    if (execution_mode() == "independent") {
+      datos_para_usar <- generate_independent_data_m1(n_clientes = 1000, seed = 123)
+      showNotification("Modo independiente: Usando datos simulados para M1", type = "info", duration = 3)
+    } else {
+      datos_para_usar <- datos_reactivos()
+    }
+
     # Preprocesamiento según selección
     prep <- preprocess_inputs(
-      df_list = datos_reactivos(),
+      df_list = datos_para_usar,
       vars_seleccionadas = input$vars
     )
 

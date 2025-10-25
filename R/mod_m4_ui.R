@@ -14,6 +14,7 @@ mod_m4_ui <- function(id){
         width = 3,
         h3("Inputs"),
         tags$strong("Variables predictoras"),
+        helpText("💡 Si seleccionas más de 15 variables, el sistema automáticamente elegirá las 15 más relevantes por correlación para evitar overfitting."),
         checkboxGroupInput(
           inputId = ns("vars_predictoras"),
           label   = NULL,

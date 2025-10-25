@@ -3,7 +3,7 @@
 # Server del Módulo 2 – Scoring (Regresión Logística)
 # -------------------------------------------------------------------
 
-mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
+mod_m2_server <- function(input, output, session, datos_reactivos, id_sim, execution_mode = reactive("sequential")){
   ns <- session$ns
 
   # ----------------------------
@@ -140,15 +140,25 @@ mod_m2_server <- function(input, output, session, datos_reactivos, id_sim){
   # ----------------------------
   observeEvent(input$train_models, {
     shiny::req(datos_reactivos)
-    d <- datos_reactivos()
-    shiny::req(d)
 
-    # VALIDACIÓN: Verificar que hay datos de M1 (clusters)
-    if (is.null(session$userData$clusters) || nrow(session$userData$clusters) == 0) {
-      shiny::showNotification(
-        "No hay datos de clusters del Módulo 1. Complete el Módulo 1 primero.",
-        type = "warning"
-      )
+    # En modo independiente, generar datos simulados
+    if (execution_mode() == "independent") {
+      d <- generate_independent_data_m1(n_clientes = 1000, seed = 123)
+      # Simular clusters previos
+      simulated_clusters <- generate_simulated_clusters(n_clientes = 1000, seed = 456)
+      session$userData$clusters <- simulated_clusters
+      shiny::showNotification("Modo independiente: Usando datos simulados con clusters generados", type = "info", duration = 3)
+    } else {
+      d <- datos_reactivos()
+      shiny::req(d)
+
+      # VALIDACIÓN: Verificar que hay datos de M1 (clusters)
+      if (is.null(session$userData$clusters) || nrow(session$userData$clusters) == 0) {
+        shiny::showNotification(
+          "No hay datos de clusters del Módulo 1. Complete el Módulo 1 primero.",
+          type = "warning"
+        )
+      }
     }
 
     shiny::withProgress(message = "Entrenando modelos...", value = 0, {

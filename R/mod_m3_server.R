@@ -4,7 +4,7 @@
 # Firma: callModule(..., datos_reactivos=..., id_sim=..., cluster_levels=NULL)
 # ---------------------------------------------------------------
 
-mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, cluster_levels = NULL){
+mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, execution_mode = reactive("sequential"), cluster_levels = NULL){
   ns <- session$ns
   `%||%` <- function(a, b) if (is.null(a)) b else a
 
@@ -75,14 +75,16 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
         selected_available <- vars_con_variacion[1:min(3, length(vars_con_variacion))]
       }
 
-      # Mostrar mensaje si se excluyeron variables por falta de variación
-      vars_excluidas <- setdiff(num_vars, vars_con_variacion)
-      if (length(vars_excluidas) > 0) {
-        shiny::showNotification(
-          sprintf("Variables excluidas por falta de variación: %s",
-                  paste(vars_excluidas, collapse = ", ")),
-          type = "message", duration = 5
-        )
+      # Mostrar mensaje si se excluyeron variables por falta de variación (solo en modo secuencial)
+      if (execution_mode() != "independent") {
+        vars_excluidas <- setdiff(num_vars, vars_con_variacion)
+        if (length(vars_excluidas) > 0) {
+          shiny::showNotification(
+            sprintf("Variables excluidas por falta de variación: %s",
+                   paste(vars_excluidas, collapse = ", ")),
+            type = "message", duration = 5
+          )
+        }
       }
 
       shiny::updateCheckboxGroupInput(
@@ -134,12 +136,21 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
   # Base con ME + poblar controles
   # ----------------------------
   base_df <- shiny::reactive({
-    shiny::req(datos_reactivos())
-    df <- .get_base_df(datos_reactivos())
+    # En modo independiente, usar datos simulados completos
+    if (execution_mode() == "independent") {
+      df <- generate_complete_data_m3(n_clientes = 1000, seed = 131415)
+      # Simular scores previos
+      simulated_scores <- generate_simulated_scores(n_clientes = 1000, seed = 789)
+      session$userData$scores <- simulated_scores
+      shiny::showNotification("Modo independiente: Usando datos simulados con scores generados", type = "info", duration = 3)
+    } else {
+      shiny::req(datos_reactivos())
+      df <- .get_base_df(datos_reactivos())
 
-    # Debug: Check initial data
-    if (nrow(df) == 0) {
-      stop("Datos iniciales vacíos de gen_datos()")
+      # Debug: Check initial data
+      if (nrow(df) == 0) {
+        stop("Datos iniciales vacíos de gen_datos()")
+      }
     }
 
     # Ensure id_cliente is character
@@ -248,18 +259,21 @@ mod_m3_server <- function(input, output, session, datos_reactivos, id_sim, clust
   # Exploración: correlaciones con ME (bar plot + tabla)
   # ----------------------------
   observeEvent(input$calcular_cor, {
-    # VALIDACIÓN: Verificar dependencias de módulos anteriores
-    if (is.null(session$userData$clusters) || nrow(session$userData$clusters) == 0) {
-      shiny::showNotification(
-        "No hay datos de clusters del Módulo 1. Complete el Módulo 1 primero.",
-        type = "warning"
-      )
-    }
-    if (is.null(session$userData$scores) || nrow(session$userData$scores) == 0) {
-      shiny::showNotification(
-        "No hay datos de scores del Módulo 2. Complete el Módulo 2 primero.",
-        type = "warning"
-      )
+    # En modo independiente, no verificar dependencias
+    if (execution_mode() != "independent") {
+      # VALIDACIÓN: Verificar dependencias de módulos anteriores
+      if (is.null(session$userData$clusters) || nrow(session$userData$clusters) == 0) {
+        shiny::showNotification(
+          "No hay datos de clusters del Módulo 1. Complete el Módulo 1 primero.",
+          type = "warning"
+        )
+      }
+      if (is.null(session$userData$scores) || nrow(session$userData$scores) == 0) {
+        shiny::showNotification(
+          "No hay datos de scores del Módulo 2. Complete el Módulo 2 primero.",
+          type = "warning"
+        )
+      }
     }
 
     df   <- base_df()

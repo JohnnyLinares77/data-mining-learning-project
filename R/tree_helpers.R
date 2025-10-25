@@ -34,16 +34,56 @@ train_tree <- function(df, vars_predictoras, var_dependiente = "alerta_riesgo") 
     stop("Ninguna de las variables predictoras está disponible en los datos")
   }
 
-  # Usar solo las variables disponibles
-  vars_predictoras <- vars_disponibles
+  # MOSTRAR TODAS LAS VARIABLES SELECCIONADAS PERO LIMITAR PARA EVITAR OVERFITTING
+  # Si hay más de 15 variables, seleccionar las más importantes, pero mostrar todas en el mensaje
+  if (length(vars_disponibles) > 15) {
+    # Calcular importancia usando correlación con la variable dependiente
+    if (is.factor(df[[var_dependiente]])) {
+      # Para categórica, convertir a numérica para correlación
+      y_numeric <- as.numeric(df[[var_dependiente]])
+      cor_values <- sapply(vars_disponibles, function(var) {
+        tryCatch({
+          if (is.numeric(df[[var]])) {
+            abs(cor(y_numeric, df[[var]], use = "complete.obs"))
+          } else {
+            0.1  # Valor bajo para variables no numéricas
+          }
+        }, error = function(e) 0.1)
+      })
+    } else {
+      cor_values <- sapply(vars_disponibles, function(var) {
+        tryCatch({
+          abs(cor(df[[var_dependiente]], df[[var]], use = "complete.obs"))
+        }, error = function(e) 0.1)
+      })
+    }
+
+    # Seleccionar top 15 variables más importantes
+    top_vars <- names(sort(cor_values, decreasing = TRUE))[1:min(15, length(vars_disponibles))]
+    vars_predictoras <- top_vars
+    message(sprintf("Seleccionadas top 15 variables de %d disponibles para evitar overfitting: %s",
+                   length(vars_disponibles), paste(top_vars, collapse = ", ")))
+  } else {
+    vars_predictoras <- vars_disponibles
+    message(sprintf("Usando todas las %d variables seleccionadas: %s",
+                   length(vars_disponibles), paste(vars_disponibles, collapse = ", ")))
+  }
 
   # Preparar fórmula
   formula_str <- paste(var_dependiente, "~", paste(vars_predictoras, collapse = " + "))
   formula <- as.formula(formula_str)
 
-  # Entrenar árbol con rpart - parámetros más permisivos para mostrar más variables
+  # Entrenar árbol con rpart - parámetros más conservadores para estabilidad
   tree_model <- rpart::rpart(formula, data = df, method = "class",
-                            control = rpart::rpart.control(minsplit = 10, cp = 0.005, maxdepth = 6))
+                            control = rpart::rpart.control(
+                              minsplit = 20,      # Mínimo 20 observaciones para dividir
+                              minbucket = 10,     # Mínimo 10 observaciones por hoja
+                              cp = 0.01,          # Parámetro de complejidad más restrictivo
+                              maxdepth = 5,       # Máximo 5 niveles de profundidad
+                              maxcompete = 3,     # Máximo 3 competidores por división
+                              maxsurrogate = 2   # Máximo 2 surrogates
+                            ),
+                            model = TRUE)  # IMPORTANTE: Guardar datos del modelo para rpart.plot
 
   return(tree_model)
 }

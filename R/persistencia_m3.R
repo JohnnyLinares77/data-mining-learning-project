@@ -22,7 +22,8 @@
   })
 }
 
-persist_eval_m3 <- function(id_sim, modelo, rmse, r2_adj, alpha, vars){
+persist_eval_m3 <- function(id_sim, modelo, rmse, r2_adj, alpha, vars, execution_mode = "sequential"){
+  suffix <- if (execution_mode == "independent") "_independent" else ""
   df <- data.frame(
     timestamp = as.character(Sys.time()),
     id_sim    = id_sim,
@@ -32,11 +33,12 @@ persist_eval_m3 <- function(id_sim, modelo, rmse, r2_adj, alpha, vars){
     alpha     = alpha,
     vars      = paste(vars, collapse = ",")
   )
-  .write_append_safe(df, file.path("data","eval_m3.csv"))
+  .write_append_safe(df, file.path("data", paste0("eval_m3", suffix, ".csv")))
 }
 
 persist_simulacion_m3 <- function(id_sim, modelo, monto, plazo, score, cluster,
-                                  rate_vec, me_vec, elasticidad_vec){
+                                   rate_vec, me_vec, elasticidad_vec, execution_mode = "sequential"){
+  suffix <- if (execution_mode == "independent") "_independent" else ""
   df <- data.frame(
     timestamp = as.character(Sys.time()),
     id_sim    = id_sim,
@@ -49,5 +51,5 @@ persist_simulacion_m3 <- function(id_sim, modelo, monto, plazo, score, cluster,
     ME        = me_vec,
     elasticidad = elasticidad_vec
   )
-  .write_append_safe(df, file.path("data","simulacion_m3.csv"))
+  .write_append_safe(df, file.path("data", paste0("simulacion_m3", suffix, ".csv")))
 }

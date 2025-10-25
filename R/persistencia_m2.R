@@ -43,9 +43,11 @@
 #    Salida: data/eval_m2.csv
 # -------------------------------------------------------------------
 persist_eval_m2 <- function(id_sim, auc_accept, auc_mora,
-                            thr, accuracy, sensibilidad, especificidad, precision, f1){
+                             thr, accuracy, sensibilidad, especificidad, precision, f1,
+                             execution_mode = "sequential"){
   .ensure_dir("data")
-  file <- file.path("data","eval_m2.csv")
+  suffix <- if (execution_mode == "independent") "_independent" else ""
+  file <- file.path("data", paste0("eval_m2", suffix, ".csv"))
 
   num4 <- function(x) {
     if (is.null(x) || is.na(x)) NA_real_ else round(as.numeric(x), 4)
@@ -73,9 +75,10 @@ persist_eval_m2 <- function(id_sim, auc_accept, auc_mora,
 # 2) Resultados por cliente (probabilidades, score, decisión)
 #    Salida: data/clientes_scores.csv
 # -------------------------------------------------------------------
-persist_clientes_scores <- function(id_sim, df_clientes){
+persist_clientes_scores <- function(id_sim, df_clientes, execution_mode = "sequential"){
   .ensure_dir("data")
-  file <- file.path("data","clientes_scores.csv")
+  suffix <- if (execution_mode == "independent") "_independent" else ""
+  file <- file.path("data", paste0("clientes_scores", suffix, ".csv"))
 
   # Asegurar tipos y columnas esperadas
   if (!is.data.frame(df_clientes)) {
@@ -109,12 +112,14 @@ persist_clientes_scores <- function(id_sim, df_clientes){
 #    Salida: data/variables_modelos.csv
 # -------------------------------------------------------------------
 persist_variables_m2 <- function(id_sim,
-                                 vars_candidatas,
-                                 vars_accept_keep,
-                                 vars_mora_keep,
-                                 alpha_sig){
+                                  vars_candidatas,
+                                  vars_accept_keep,
+                                  vars_mora_keep,
+                                  alpha_sig,
+                                  execution_mode = "sequential"){
   .ensure_dir("data")
-  file <- file.path("data","variables_modelos.csv")
+  suffix <- if (execution_mode == "independent") "_independent" else ""
+  file <- file.path("data", paste0("variables_modelos", suffix, ".csv"))
 
   # Normalizar NULLs y a vector de caracteres
   `%||%` <- function(a, b) if (is.null(a)) b else a
