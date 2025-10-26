@@ -23,12 +23,6 @@ mod_m4_ui <- function(id){
           value   = TRUE
         ),
         tags$hr(),
-        tags$strong("Pre-poda (opcional)"),
-        tags$small("Deja valores por defecto para provocar un árbol grande y luego podar."),
-        numericInput(ns("minsplit"), "minsplit", value = 2, min = 2, max = 50, step = 1),
-        numericInput(ns("maxdepth"), "maxdepth", value = 30, min = 1, max = 30, step = 1),
-        numericInput(ns("cp_pre"),   "cp (pre-poda)", value = 0, min = 0, max = 0.05, step = 0.001),
-        tags$hr(),
         tags$strong("Variable dependiente"),
         selectInput(
           inputId = ns("var_dependiente"),
@@ -158,8 +152,6 @@ mod_m4_ui <- function(id){
             uiOutput(ns("feedback_grafico")),
             br(),
             hr(),
-            # Selector CP generado desde server (en base a cptable)
-            uiOutput(ns("cp_selector")),
             actionButton(ns("aplicar_poda"), "Aplicar Poda", class = "btn-warning"),
             br(), br(),
             h4("Visualización Antes y Después + Métricas de Rendimiento"),

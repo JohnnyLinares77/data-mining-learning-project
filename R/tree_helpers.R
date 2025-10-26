@@ -122,13 +122,14 @@ train_tree <- function(df, vars_predictoras, var_dependiente = "alerta_riesgo",
     }
   }
 
-  # Entrenar árbol con rpart – pre-poda mínima para crecer grande
+  # Entrenar árbol con rpart – parámetros permisivos para árbol inicial grande
   tree_model <- rpart::rpart(
     formula, data = df, method = "class",
     control = rpart::rpart.control(
       minsplit = minsplit, minbucket = minbucket,
       maxdepth = maxdepth, cp = cp_pre, xval = 10
-    )
+    ),
+    x = TRUE, model = TRUE  # Conservar metadatos para predicción
   )
 
   # LOG: Resultados del entrenamiento
@@ -436,6 +437,27 @@ get_node_rule <- function(tree_model, node_id) {
   }
 }
 
+# Función auxiliar para alinear tipos de datos con el modelo
+.align_types_for_rpart <- function(model, new_data) {
+  # DataClasses del modelo (del terms)
+  data_classes <- attr(model$terms, "dataClasses")
+  # xlevels para variables factor
+  xlevels <- model$xlevels
+
+  # Recorre solo los predictores (omitir la respuesta, que es el primero del terms)
+  for (nm in setdiff(names(data_classes), names(model$ylevels))) {
+    if (!nm %in% names(new_data)) next
+    cls <- data_classes[[nm]]
+    if (cls == "factor") {
+      levs <- xlevels[[nm]]
+      new_data[[nm]] <- factor(as.character(new_data[[nm]]), levels = levs)
+    } else {
+      new_data[[nm]] <- suppressWarnings(as.numeric(new_data[[nm]]))
+    }
+  }
+  new_data
+}
+
 # Función para clasificar nuevas observaciones
 classify_new_data <- function(tree_model, new_data) {
   message(sprintf("[CLASSIFY] Iniciando clasificación de %d observaciones", nrow(new_data)))
@@ -455,39 +477,14 @@ classify_new_data <- function(tree_model, new_data) {
     stop("[CLASSIFY] ERROR: Variable 'id_cliente' no encontrada en datos nuevos")
   }
 
+  # Alinear tipos de datos con el modelo entrenado
+  new_data <- .align_types_for_rpart(tree_model, new_data)
+
   # LOG: Variables en datos nuevos vs modelo
   vars_model <- names(tree_model$xlevels)
   vars_data <- names(new_data)
   message(sprintf("[CLASSIFY] Variables en modelo: %d, Variables en datos: %d",
                   length(vars_model), length(vars_data)))
-
-  # Asegurar que las variables categóricas tengan los mismos niveles que en el modelo
-  if (!is.null(tree_model$xlevels)) {
-    for (v in names(tree_model$xlevels)) {
-      if (v %in% names(new_data)) {
-        original_levels <- levels(new_data[[v]])
-        new_data[[v]] <- factor(new_data[[v]], levels = tree_model$xlevels[[v]])
-        message(sprintf("[CLASSIFY] Variable '%s': %d -> %d niveles",
-                        v, length(original_levels), length(tree_model$xlevels[[v]])))
-      } else {
-        warning(sprintf("[CLASSIFY] WARNING: Variable '%s' del modelo no encontrada en datos nuevos", v))
-      }
-    }
-  }
-
-  # Convertir variables numéricas con pocas categorías a factores si no fueron
-  # capturadas en xlevels. Esto evita errores cuando el modelo espera factores.
-  conversiones <- c()
-  for (v in names(new_data)) {
-    if (v != "id_cliente" && is.numeric(new_data[[v]]) && length(unique(new_data[[v]])) <= 10) {
-      new_data[[v]] <- as.factor(new_data[[v]])
-      conversiones <- c(conversiones, v)
-    }
-  }
-
-  if (length(conversiones) > 0) {
-    message(sprintf("[CLASSIFY] Convertidas a factor en predicción: %s", paste(conversiones, collapse = ", ")))
-  }
 
   # Hacer predicciones
   message("[CLASSIFY] Generando predicciones...")
@@ -506,7 +503,7 @@ classify_new_data <- function(tree_model, new_data) {
   # Verificar que las predicciones tienen sentido
   if (length(predictions) != nrow(new_data)) {
     stop(sprintf("[CLASSIFY] ERROR: Número de predicciones (%d) != número de observaciones (%d)",
-                 length(predictions), nrow(new_data)))
+                  length(predictions), nrow(new_data)))
   }
 
   # Crear dataframe con resultados

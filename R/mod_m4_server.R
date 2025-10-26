@@ -239,6 +239,8 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
       }
     } else {
       selected_vars <- intersect(input$vars_predictoras, names(df_hist))
+      # Excluir puntaje_riesgo para evitar fuga de información
+      selected_vars <- setdiff(selected_vars, c("puntaje_riesgo"))
       if (length(selected_vars) < 3) {
         showNotification("Selecciona al menos 3 variables o activa el modo demo.", type = "error")
         return(NULL)
@@ -303,7 +305,7 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     tryCatch({
       rv$tree_model <- train_tree(
         rv$train_data, selected_vars, input$var_dependiente,
-        minsplit = 2, maxdepth = 30, cp_pre = 0
+        minsplit = 5, maxdepth = 10, cp_pre = 0.001
       )
       if (is.null(rv$tree_model)) {
         message("[M4_TRAIN] ERROR: train_tree retornó NULL")
@@ -486,15 +488,6 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
          "Tamaño Óptimo", pos = 4, col = "red")
   })
 
-  # Selector dinámico de CP para poda manual
-  output$cp_selector <- renderUI({
-    req(rv$tree_model)
-    tb <- rpart::printcp(rv$tree_model)
-    cps <- as.numeric(tb[, "CP"])
-    default_cp <- cps[which.min(tb[, "xerror"])]
-    sliderInput(ns("cp_prune"), "Selecciona CP para podar",
-                min = min(cps), max = max(cps), value = default_cp, step = diff(range(cps))/100)
-  })
 
   # Información de poda
   output$info_poda <- renderUI({
@@ -511,25 +504,18 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     )
   })
 
-  # Aplicar poda (usa CP del slider si existe)
+  # Aplicar poda automática con CP óptimo
   observeEvent(input$aplicar_poda, {
     req(rv$tree_model)
 
-    cp_to_use <- tryCatch(input$cp_prune, error = function(e) NULL)
-    if (!is.null(cp_to_use)) {
-      pruned <- rpart::prune(rv$tree_model, cp = cp_to_use)
-      poda_result <- list(original = rv$tree_model, pruned = pruned,
-                          cp_optimal = cp_to_use, cv_results = rpart::printcp(rv$tree_model))
-    } else {
-      # fallback: cp óptimo automático usando prune_tree
-      poda_result <- prune_tree(rv$tree_model, rv$train_data)
-    }
+    # Calcular poda automática con CP óptimo por validación cruzada
+    poda_result <- prune_tree(rv$tree_model, rv$train_data)
     rv$pruned_model <- poda_result$pruned
     rv$poda_info <- poda_result
 
     rv$poda_aplicada <- TRUE
 
-    showNotification("Poda aplicada exitosamente.", type = "message")
+    showNotification("Poda aplicada exitosamente con CP óptimo.", type = "message")
   })
 
   # Visualización árbol original
