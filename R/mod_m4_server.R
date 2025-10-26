@@ -195,6 +195,17 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     rv$train_data <- df_modelo[train_idx, ]
     rv$test_data <- df_modelo[-train_idx, ]
 
+    # Congelar factores al partir train/test
+    factores <- c("tipo_ocupacion","ubicacion","estado_civil","nivel_educativo",
+                  "rubro_laboral","frecuencia_uso","cancelaciones_anticip",
+                  "tendencia_ingresos","n_dependientes","n_moras_previas","productos_activos")
+
+    for (nm in intersect(factores, names(rv$train_data))) {
+      lv <- sort(unique(rv$train_data[[nm]]))
+      rv$train_data[[nm]] <- factor(rv$train_data[[nm]], levels = lv)
+      rv$test_data[[nm]]  <- factor(rv$test_data[[nm]],  levels = lv)
+    }
+
     message(sprintf("[M4_TRAIN] División train/test: %d train, %d test",
                     nrow(rv$train_data), nrow(rv$test_data)))
 
@@ -456,8 +467,9 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
 
     # Calcular accuracy en test set
     if (!is.null(rv$test_data)) {
-      pred_original <- predict(rv$tree_model, rv$test_data, type = "class")
-      pred_pruned <- predict(rv$pruned_model, rv$test_data, type = "class")
+      nd_test <- .align_types_for_predict(rv$tree_model, rv$test_data)
+      pred_original <- safe_predict_class(rv$tree_model, nd_test)
+      pred_pruned <- safe_predict_class(rv$pruned_model, nd_test)
 
       acc_original <- mean(pred_original == rv$test_data$alerta_riesgo)
       acc_pruned <- mean(pred_pruned == rv$test_data$alerta_riesgo)
@@ -504,7 +516,7 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
   observe({
     req(rv$pruned_model, rv$test_data)
 
-    pred <- predict(rv$pruned_model, rv$test_data, type = "class")
+    pred <- safe_predict_class(rv$pruned_model, rv$test_data)
     rv$test_predictions <- pred
     rv$metrics <- calculate_metrics(pred, rv$test_data$alerta_riesgo, input$umbral_clasificacion)
   })

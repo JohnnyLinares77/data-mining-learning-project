@@ -489,13 +489,13 @@ classify_new_data <- function(tree_model, new_data) {
   # Hacer predicciones
   message("[CLASSIFY] Generando predicciones...")
   predictions <- tryCatch({
-    predict(tree_model, newdata = new_data, type = "class")
+    safe_predict_class(tree_model, new_data)
   }, error = function(e) {
     stop(sprintf("[CLASSIFY] ERROR en predicción de clases: %s", e$message))
   })
 
   probabilities <- tryCatch({
-    predict(tree_model, newdata = new_data, type = "prob")
+    safe_predict_prob(tree_model, new_data)
   }, error = function(e) {
     stop(sprintf("[CLASSIFY] ERROR en predicción de probabilidades: %s", e$message))
   })
@@ -533,4 +533,32 @@ classify_new_data <- function(tree_model, new_data) {
 # Variables efectivamente usadas por el árbol
 variables_usadas <- function(tree_model){
   unique(tree_model$frame$var[tree_model$frame$var != "<leaf>"])
+}
+
+# Fuerza que newdata tenga las mismas columnas y tipos (niveles) que el modelo
+.align_types_for_predict <- function(model, newdata) {
+  nd <- newdata
+
+  # 1) Asegurar todas las variables del modelo
+  vars_needed <- attr(model$terms, "term.labels")
+  missing <- setdiff(vars_needed, names(nd))
+  for (nm in missing) nd[[nm]] <- NA
+
+  # 2) Forzar factores con los mismos niveles que en el fit
+  if (!is.null(model$xlevels) && length(model$xlevels)) {
+    for (nm in names(model$xlevels)) {
+      nd[[nm]] <- factor(nd[[nm]], levels = model$xlevels[[nm]])
+    }
+  }
+  nd
+}
+
+safe_predict_class <- function(model, newdata) {
+  nd <- .align_types_for_predict(model, newdata)
+  predict(model, nd, type = "class")
+}
+
+safe_predict_prob <- function(model, newdata) {
+  nd <- .align_types_for_predict(model, newdata)
+  predict(model, nd, type = "prob")
 }
