@@ -40,6 +40,7 @@ source("R/mod_m3_ui.R")
 source("R/mod_m3_server.R")
 
 # ---- Sourcing: Módulo 4 - Árboles de Clasificación
+source("R/gen_datos_m4.R")  # Generador específico para M4
 source("R/tree_helpers.R")
 source("R/persistencia_m4.R")
 source("R/mod_m4_ui.R")

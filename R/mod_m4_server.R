@@ -45,36 +45,29 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
       setdiff(names(df), c("id_cliente","alerta_riesgo"))
     }, error = function(e) pool_default)
 
-    if (isTRUE(input$demo_auto)) {
-      if (is.null(rv$vars_demo_selected)) {
-        set.seed(123)
-        k <- min(18, max(12, length(pool)))
-        rv$vars_demo_selected <- sample(pool, size = min(k, length(pool)))
-      }
-      tags$div(
-        class = "well",
-        tags$p(tags$strong("📦 Modelo preconfigurado por el equipo de Modelización.")),
-        tags$p("Lee la pestaña ", tags$em("Introducción"),
-               " y luego pulsa ", tags$strong("Entrenar Modelo"),
-               " para interpretarlo y podarlo."),
-        tags$p("Variables incluidas:"),
-        tags$p(lapply(rv$vars_demo_selected, function(v) {
-          tags$span(class = "label label-info", style = "display:inline-block;margin:2px;", v)
-        })),
-        tags$br(),
-        tags$fieldset(disabled = "disabled",
-          checkboxGroupInput(ns("vars_predictoras"), label = NULL, choices = pool,
-                             selected = rv$vars_demo_selected)
-        ),
-        tags$small("Bloque deshabilitado en modo demo (solo lectura).")
-      )
-    } else {
-      tagList(
-        helpText("💡 Selecciona varias variables para entrenar (luego podrás podar)."),
-        checkboxGroupInput(ns("vars_predictoras"), label = NULL, choices = pool,
-                           selected = intersect(pool, c("edad","ingreso_verificado","score_buro","rfm","n_moras_previas")))
-      )
+    # Siempre usar modelo preconfigurado
+    if (is.null(rv$vars_demo_selected)) {
+      set.seed(123)
+      k <- min(18, max(12, length(pool)))
+      rv$vars_demo_selected <- sample(pool, size = min(k, length(pool)))
     }
+    tags$div(
+      class = "well",
+      tags$p(tags$strong("📦 Modelo preconfigurado por el equipo de Modelización.")),
+      tags$p("Lee la pestaña ", tags$em("Introducción"),
+             " y luego pulsa ", tags$strong("Entrenar Modelo"),
+             " para interpretarlo y podarlo."),
+      tags$p("Variables incluidas:"),
+      tags$p(lapply(rv$vars_demo_selected, function(v) {
+        tags$span(class = "label label-info", style = "display:inline-block;margin:2px;", v)
+      })),
+      tags$br(),
+      tags$fieldset(disabled = "disabled",
+        checkboxGroupInput(ns("vars_predictoras"), label = NULL, choices = pool,
+                          selected = rv$vars_demo_selected)
+      ),
+      tags$small("Bloque deshabilitado - modelo preconfigurado.")
+    )
   })
 
   # -------------------------
@@ -90,106 +83,39 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
   }
 
   # -------------------------
-  # Preparar dataset histórico (interno) - MEJORADO CON LOGS Y VALIDACIONES
+  # Preparar dataset histórico (interno) - USANDO GENERADOR M4 PROPIO
   # -------------------------
   prepare_historic_data <- reactive({
-    message("[M4_PREPARE] Iniciando preparación de datos históricos")
+    message("[M4_PREPARE] Iniciando preparación de datos históricos con generador M4")
 
-    # En modo independiente, usar datos históricos simulados completos
-    if (execution_mode() == "independent") {
-      tryCatch({
-        df <- generate_historic_data_m4(n_clientes = 2000, seed = 101112)
-        showNotification("Modo independiente: Usando datos históricos simulados para M4", type = "info", duration = 3)
-        message(sprintf("[M4_PREPARE] Modo independiente: %d observaciones generadas", nrow(df)))
-      }, error = function(e) {
-        message(sprintf("[M4_PREPARE] ERROR generando datos simulados: %s", conditionMessage(e)))
-        showNotification("❌ Error generando datos históricos simulados", type = "error")
-        return(NULL)
-      })
-    } else {
-      # Usar datos simulados como "históricos"
-      df <- .get_base_df_m4(datos_reactivos())
-      message(sprintf("[M4_PREPARE] Modo secuencial: %d observaciones base", nrow(df)))
+    # Siempre usar generador M4 propio (independiente de otros módulos)
+    tryCatch({
+      df <- gen_datos_m4(n = 2000, seed = 101112)
+      showNotification("Datos históricos generados específicamente para M4", type = "info", duration = 3)
+      message(sprintf("[M4_PREPARE] %d observaciones generadas con gen_datos_m4", nrow(df)))
+    }, error = function(e) {
+      message(sprintf("[M4_PREPARE] ERROR en gen_datos_m4: %s", conditionMessage(e)))
+      showNotification("❌ Error generando datos históricos para M4", type = "error")
+      return(NULL)
+    })
 
-      # Asegurar que id_cliente sea character
-      df$id_cliente <- as.character(df$id_cliente)
-
-      # Crear variable dependiente de alerta de riesgo
-      tryCatch({
-        df$alerta_riesgo <- .create_alerta_riesgo(df)
-        message("[M4_PREPARE] Variable dependiente creada con .create_alerta_riesgo")
-      }, error = function(e) {
-        # Fallback si .create_alerta_riesgo no está disponible
-        df$alerta_riesgo <- factor(ifelse(df$score_buro < 500 | df$n_moras_previas > 2, "alto",
-                                          ifelse(df$score_buro < 700 | df$n_moras_previas > 0, "medio", "bajo")),
-                                   levels = c("bajo", "medio", "alto"))
-        message("[M4_PREPARE] Variable dependiente creada con fallback")
-      })
-    }
-
-    # LOG: Estado inicial de datos
-    message(sprintf("[M4_PREPARE] Datos iniciales: %d filas, %d columnas", nrow(df), ncol(df)))
-    message(sprintf("[M4_PREPARE] Columnas disponibles: %s", paste(names(df), collapse = ", ")))
-
-    # Filtrar columnas relevantes: incluir todas las variables predictoras disponibles
-    # menos id_cliente y la variable dependiente. Esto permite que el usuario seleccione
-    # cualquier combinación de variables y que la lista de opciones no se reduzca después
-    # del entrenamiento.
-    all_predictor_vars <- setdiff(names(df), c("id_cliente", "alerta_riesgo"))
-    vars_disponibles <- c("id_cliente", all_predictor_vars, "alerta_riesgo")
-    df <- df[, intersect(vars_disponibles, names(df)), drop = FALSE]
-
-    message(sprintf("[M4_PREPARE] Variables predictoras disponibles: %d (%s)",
-                    length(all_predictor_vars), paste(all_predictor_vars, collapse = ", ")))
-
-    # LOG: NAs antes de remover
-    na_count <- sum(is.na(df))
-    message(sprintf("[M4_PREPARE] Valores NA encontrados: %d", na_count))
-
-    # Remover filas con NA
-    df_original <- nrow(df)
-    df <- na.omit(df)
-    df_removed <- df_original - nrow(df)
-
-    if (df_removed > 0) {
-      message(sprintf("[M4_PREPARE] Removidas %d filas con NA, quedan %d filas", df_removed, nrow(df)))
-    }
-
-    # VALIDACIÓN: Asegurar que tenemos suficientes datos
+    # Validaciones básicas (gen_datos_m4 ya produce datos limpios)
     if (nrow(df) < 100) {
       message(sprintf("[M4_PREPARE] ERROR: Datos insuficientes (%d < 100)", nrow(df)))
       showNotification("Datos insuficientes para M4. Se necesitan al menos 100 observaciones.", type = "error")
       return(NULL)
     }
 
-    # VALIDACIÓN: Asegurar que alerta_riesgo existe y tiene variación
-    if (!"alerta_riesgo" %in% names(df)) {
-      message("[M4_PREPARE] ERROR: Variable dependiente 'alerta_riesgo' no encontrada")
-      showNotification("Variable dependiente 'alerta_riesgo' no encontrada.", type = "error")
-      return(NULL)
-    }
-
+    # Verificar distribución de clases
     unique_classes <- length(unique(df$alerta_riesgo))
     class_dist <- table(df$alerta_riesgo)
     message(sprintf("[M4_PREPARE] Variable dependiente: %d clases únicas - %s",
                     unique_classes, paste(names(class_dist), class_dist, sep = "=", collapse = ", ")))
 
-    if (unique_classes < 2) {
-      message("[M4_PREPARE] ERROR: Variable dependiente tiene menos de 2 clases")
-      showNotification("La variable 'alerta_riesgo' no tiene suficiente variación.", type = "error")
+    if (unique_classes < 3) {
+      message("[M4_PREPARE] ERROR: Se necesitan las 3 clases de riesgo")
+      showNotification("Error en generación de clases de riesgo.", type = "error")
       return(NULL)
-    }
-
-    # Verificar variabilidad de variables predictoras críticas
-    critical_vars <- c("score_buro", "n_moras_previas", "edad", "ingreso_verificado")
-    for (var in critical_vars) {
-      if (var %in% names(df)) {
-        var_unique <- length(unique(df[[var]]))
-        message(sprintf("[M4_PREPARE] Variable crítica '%s': %d valores únicos", var, var_unique))
-        if (var_unique < 3) {
-          warning(sprintf("[M4_PREPARE] WARNING: Variable crítica '%s' tiene baja variabilidad (%d)", var, var_unique))
-        }
-      }
     }
 
     rv$df_historico <- df
@@ -221,31 +147,10 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
 
     message(sprintf("[M4_TRAIN] Datos preparados: %d observaciones, %d variables", nrow(df_hist), ncol(df_hist)))
 
-    # Selección de variables según modo
-    if (isTRUE(input$demo_auto)) {
-      pool <- setdiff(names(df_hist), c("id_cliente","alerta_riesgo"))
-      if (is.null(rv$vars_demo_selected)) {
-        set.seed(123)
-        k <- min(18, max(12, length(pool)))
-        rv$vars_demo_selected <- sample(pool, size = min(k, length(pool)))
-      }
-      selected_vars <- intersect(rv$vars_demo_selected, names(df_hist))
-      # Generar un target didáctico con muchas variables (si dispones del helper)
-      if (exists(".create_alerta_riesgo_demo")) {
-        df_hist$alerta_riesgo <- .create_alerta_riesgo_demo(df_hist, selected_vars, seed = 123)
-      } else {
-        # Fallback: usar la función estándar si no existe la demo
-        message("[M4_TRAIN] WARNING: .create_alerta_riesgo_demo no disponible, usando función estándar")
-      }
-    } else {
-      selected_vars <- intersect(input$vars_predictoras, names(df_hist))
-      # Excluir puntaje_riesgo para evitar fuga de información
-      selected_vars <- setdiff(selected_vars, c("puntaje_riesgo"))
-      if (length(selected_vars) < 3) {
-        showNotification("Selecciona al menos 3 variables o activa el modo demo.", type = "error")
-        return(NULL)
-      }
-    }
+    # Siempre usar modelo preconfigurado
+    selected_vars <- rv$vars_demo_selected
+    # Excluir puntaje_riesgo para evitar fuga de información
+    selected_vars <- setdiff(selected_vars, c("puntaje_riesgo"))
 
     message(sprintf("[M4_TRAIN] Variables seleccionadas disponibles: %d (%s)",
                     length(selected_vars), paste(selected_vars, collapse = ", ")))

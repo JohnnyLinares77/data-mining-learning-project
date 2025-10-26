@@ -17,12 +17,6 @@ mod_m4_ui <- function(id){
         # Bloque dinámico para modo demo / modo manual
         uiOutput(ns("vars_block")),
         tags$hr(),
-        checkboxInput(
-          inputId = ns("demo_auto"),
-          label   = "Usar modo demo (modelo preconfigurado por el equipo)",
-          value   = TRUE
-        ),
-        tags$hr(),
         tags$strong("Variable dependiente"),
         selectInput(
           inputId = ns("var_dependiente"),
