@@ -22,6 +22,25 @@
   q <- stats::quantile(s, probs = c(1/3, 2/3), na.rm = TRUE)
   out <- cut(s, breaks = c(-Inf, q[1], q[2], Inf), labels = c("bajo","medio","alto"))
   factor(out, levels = c("bajo","medio","alto"))
+# --- NUEVO: Target didáctico para modo demo (depende de muchas variables)
+.create_alerta_riesgo_demo <- function(df, vars, seed = NULL) {
+  if (!is.null(seed)) set.seed(seed)
+  v <- intersect(vars, names(df))
+  stopifnot(length(v) >= 3)
+  # estandarizar numéricas cuando sea posible
+  z <- function(x) {
+    x <- suppressWarnings(as.numeric(x))
+    if (all(is.na(x))) rnorm(length(x), 0, 1) else as.numeric(scale(x))
+  }
+  # pesos aleatorios por variable + ruido
+  pesos <- runif(length(v), min = -0.7, max = 0.8)
+  s <- Reduce(`+`, Map(function(col, w) w * z(df[[col]]), v, pesos))
+  s <- s + rnorm(nrow(df), 0, 0.4)
+  q <- stats::quantile(s, probs = c(1/3, 2/3), na.rm = TRUE)
+  out <- cut(s, breaks = c(-Inf, q[1], q[2], Inf), labels = c("bajo","medio","alto"))
+  factor(out, levels = c("bajo","medio","alto"))
+}
+
 }
 
 # -------------------------------------------------------------------
@@ -103,7 +122,7 @@ train_tree <- function(df, vars_predictoras, var_dependiente = "alerta_riesgo",
     }
   }
 
-  # Entrenar árbol con rpart — pre-poda mínima por defecto (sobreajuste didáctico)
+  # Entrenar árbol con rpart – pre-poda mínima para crecer grande
   tree_model <- rpart::rpart(
     formula, data = df, method = "class",
     control = rpart::rpart.control(
@@ -340,10 +359,81 @@ select_random_node <- function(tree_model) {
 
 # Función auxiliar para obtener la regla de un nodo
 get_node_rule <- function(tree_model, node_id) {
-  # Esta es una simplificación - en la práctica necesitarías
-  # rastrear el camino desde la raíz hasta el nodo
-  # Por ahora, devolver una descripción básica
-  paste("Regla para nodo", node_id)
+  # Obtener el frame del árbol
+  frame <- tree_model$frame
+  splits <- tree_model$splits
+
+  if (is.null(frame) || is.null(splits)) {
+    return("Regla no disponible")
+  }
+
+  # Función recursiva para construir la regla
+  build_rule <- function(current_node, path = c()) {
+    if (current_node > nrow(frame)) {
+      return(path)
+    }
+
+    # Si es un nodo terminal
+    if (frame$var[current_node] == "<leaf>") {
+      return(path)
+    }
+
+    # Obtener información del split
+    var_name <- frame$var[current_node]
+    split_info <- splits[rownames(splits) == var_name, , drop = FALSE]
+
+    if (nrow(split_info) == 0) {
+      return(path)
+    }
+
+    # Determinar el operador y valor del split
+    if (is.numeric(tree_model$xlevels[[var_name]])) {
+      # Variable continua
+      split_val <- split_info[1, "index"]
+      left_rule <- paste(var_name, "<=", split_val)
+      right_rule <- paste(var_name, ">", split_val)
+    } else {
+      # Variable categórica
+      ncat <- split_info[1, "ncat"]
+      cats <- tree_model$xlevels[[var_name]]
+      if (length(cats) > 0) {
+        left_cats <- cats[1:ncat]
+        left_rule <- paste(var_name, "in", paste("(", paste(left_cats, collapse = ","), ")", sep = ""))
+        right_cats <- cats[(ncat+1):length(cats)]
+        right_rule <- paste(var_name, "in", paste("(", paste(right_cats, collapse = ","), ")", sep = ""))
+      } else {
+        left_rule <- paste(var_name, "en izquierda")
+        right_rule <- paste(var_name, "en derecha")
+      }
+    }
+
+    # Agregar al path dependiendo del lado
+    left_path <- c(path, left_rule)
+    right_path <- c(path, right_rule)
+
+    # Continuar recursivamente
+    left_result <- build_rule(current_node * 2, left_path)
+    right_result <- build_rule(current_node * 2 + 1, right_path)
+
+    # Retornar el path que llega al nodo objetivo
+    if (current_node == node_id) {
+      return(path)
+    } else if (node_id %% 2 == 0) {
+      # Nodo izquierdo
+      return(left_result)
+    } else {
+      # Nodo derecho
+      return(right_result)
+    }
+  }
+
+  # Construir la regla completa
+  rule_parts <- build_rule(1)
+  if (length(rule_parts) == 0) {
+    return("Nodo raíz")
+  } else {
+    return(paste("Si", paste(rule_parts, collapse = " Y ")))
+  }
 }
 
 # Función para clasificar nuevas observaciones

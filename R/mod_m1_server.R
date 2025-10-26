@@ -44,7 +44,7 @@ mod_m1_server <- function(input, output, session, datos_reactivos, id_sim, execu
   # Paso 1: Analizar Varianza -> calcula PCA completo y grafica
   # ----------------------------------------------------------
   observeEvent(input$analyze_var, {
-    val <- validar_variables(input$vars)
+    val <- validar_variables_m1(input$vars)
     if(!val$ok){
       showNotification(val$msg, type = "error")
       return(invisible(NULL))

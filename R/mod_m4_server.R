@@ -30,6 +30,52 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     nodo_aleatorio = NULL,
     ejercicio_actual = NULL
   )
+  # -------------------------
+  # UI: bloque de variables (demo vs manual)
+  # -------------------------
+  output$vars_block <- renderUI({
+    pool_default <- c("edad","estado_civil","ubicacion","nivel_educativo",
+                      "tipo_ocupacion","rubro_laboral","n_dependientes",
+                      "antiguedad_cliente","n_moras_previas","dias_atraso_max",
+                      "productos_activos","frecuencia_uso","cancelaciones_anticip",
+                      "rfm","ingreso_declarado","ingreso_verificado","capacidad_endeud",
+                      "endeudamiento_total","score_buro","tendencia_ingresos")
+    pool <- tryCatch({
+      df <- prepare_historic_data()
+      setdiff(names(df), c("id_cliente","alerta_riesgo"))
+    }, error = function(e) pool_default)
+
+    if (isTRUE(input$demo_auto)) {
+      if (is.null(rv$vars_demo_selected)) {
+        set.seed(123)
+        k <- min(18, max(12, length(pool)))
+        rv$vars_demo_selected <- sample(pool, size = min(k, length(pool)))
+      }
+      tags$div(
+        class = "well",
+        tags$p(tags$strong("📦 Modelo preconfigurado por el equipo de Modelización.")),
+        tags$p("Lee la pestaña ", tags$em("Introducción"),
+               " y luego pulsa ", tags$strong("Entrenar Modelo"),
+               " para interpretarlo y podarlo."),
+        tags$p("Variables incluidas:"),
+        tags$p(lapply(rv$vars_demo_selected, function(v) {
+          tags$span(class = "label label-info", style = "display:inline-block;margin:2px;", v)
+        })),
+        tags$br(),
+        tags$fieldset(disabled = "disabled",
+          checkboxGroupInput(ns("vars_predictoras"), label = NULL, choices = pool,
+                             selected = rv$vars_demo_selected)
+        ),
+        tags$small("Bloque deshabilitado en modo demo (solo lectura).")
+      )
+    } else {
+      tagList(
+        helpText("💡 Selecciona varias variables para entrenar (luego podrás podar)."),
+        checkboxGroupInput(ns("vars_predictoras"), label = NULL, choices = pool,
+                           selected = intersect(pool, c("edad","ingreso_verificado","score_buro","rfm","n_moras_previas")))
+      )
+    }
+  })
 
   # -------------------------
   # Helper: Obtener datos base
@@ -175,19 +221,28 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
 
     message(sprintf("[M4_TRAIN] Datos preparados: %d observaciones, %d variables", nrow(df_hist), ncol(df_hist)))
 
-    # Verificar que se seleccionaron exactamente 8 variables
-    if (length(input$vars_predictoras) != 8) {
-      message(sprintf("[M4_TRAIN] ERROR: Se deben seleccionar exactamente 8 variables, seleccionadas: %d", length(input$vars_predictoras)))
-      showNotification("❌ Debes seleccionar exactamente 8 variables para entrenar el modelo.", type = "error")
-      return(NULL)
-    }
-
-    # Verificar que las variables seleccionadas están disponibles
-    selected_vars <- intersect(input$vars_predictoras, names(df_hist))
-    if (length(selected_vars) != 8) {
-      message("[M4_TRAIN] ERROR: Algunas variables seleccionadas no están disponibles")
-      showNotification("❌ Algunas de las variables seleccionadas no están disponibles en los datos.", type = "error")
-      return(NULL)
+    # Selección de variables según modo
+    if (isTRUE(input$demo_auto)) {
+      pool <- setdiff(names(df_hist), c("id_cliente","alerta_riesgo"))
+      if (is.null(rv$vars_demo_selected)) {
+        set.seed(123)
+        k <- min(18, max(12, length(pool)))
+        rv$vars_demo_selected <- sample(pool, size = min(k, length(pool)))
+      }
+      selected_vars <- intersect(rv$vars_demo_selected, names(df_hist))
+      # Generar un target didáctico con muchas variables (si dispones del helper)
+      if (exists(".create_alerta_riesgo_demo")) {
+        df_hist$alerta_riesgo <- .create_alerta_riesgo_demo(df_hist, selected_vars, seed = 123)
+      } else {
+        # Fallback: usar la función estándar si no existe la demo
+        message("[M4_TRAIN] WARNING: .create_alerta_riesgo_demo no disponible, usando función estándar")
+      }
+    } else {
+      selected_vars <- intersect(input$vars_predictoras, names(df_hist))
+      if (length(selected_vars) < 3) {
+        showNotification("Selecciona al menos 3 variables o activa el modo demo.", type = "error")
+        return(NULL)
+      }
     }
 
     message(sprintf("[M4_TRAIN] Variables seleccionadas disponibles: %d (%s)",
@@ -243,14 +298,12 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
       return(NULL)
     }
 
-    # Entrenar árbol con parámetros de pre-poda del UI (por defecto: sobreajuste didáctico)
+    # Entrenar árbol grande (sobreajuste didáctico)
     progress$set(value = 0.5, detail = "Entrenando modelo...")
     tryCatch({
       rv$tree_model <- train_tree(
         rv$train_data, selected_vars, input$var_dependiente,
-        minsplit = input$minsplit %||% 2,
-        maxdepth = input$maxdepth %||% 20,
-        cp_pre   = input$cp_pre   %||% 0
+        minsplit = 2, maxdepth = 30, cp_pre = 0
       )
       if (is.null(rv$tree_model)) {
         message("[M4_TRAIN] ERROR: train_tree retornó NULL")
@@ -286,15 +339,16 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     message("[M4_TRAIN] Entrenamiento completado exitosamente")
 
     output$mensaje_entrenamiento <- renderUI({
-      used <- tryCatch(variables_usadas(rv$tree_model), error = function(e) character(0))
+      used <- tryCatch(unique(rv$tree_model$frame$var[rv$tree_model$frame$var != "<leaf>"]),
+                       error = function(e) character(0))
       div(class = "alert alert-success",
           paste0(
-            "Modelo entrenado exitosamente con ", nrow(rv$train_data),
-            " observaciones de entrenamiento y ", nrow(rv$test_data), " de prueba. ",
-            "Variables seleccionadas: ", paste(selected_vars, collapse = ", "), ". ",
-            "Variables efectivamente usadas por el árbol: ",
-            if (length(used)) paste(used, collapse = ", ") else "(ninguna adicional)"
-          ))
+            if (isTRUE(input$demo_auto)) "[Demo] " else "",
+            "Modelo entrenado: ", nrow(rv$train_data), " train / ", nrow(rv$test_data), " test. ",
+            "Variables del modelo: ", paste(selected_vars, collapse = ", "), ". ",
+            "Variables efectivas en el árbol: ",
+            if (length(used)) paste(used, collapse = ", ") else "(ninguna)")
+      )
     })
 
     progress$set(value = 1.0, detail = "Completado")
@@ -467,7 +521,7 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
       poda_result <- list(original = rv$tree_model, pruned = pruned,
                           cp_optimal = cp_to_use, cv_results = rpart::printcp(rv$tree_model))
     } else {
-      # fallback: cp óptimo automático
+      # fallback: cp óptimo automático usando prune_tree
       poda_result <- prune_tree(rv$tree_model, rv$train_data)
     }
     rv$pruned_model <- poda_result$pruned

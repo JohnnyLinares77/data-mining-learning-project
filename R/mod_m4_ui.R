@@ -14,24 +14,19 @@ mod_m4_ui <- function(id){
         width = 3,
         h3("Inputs"),
         tags$strong("Variables predictoras"),
-        helpText("💡 Selecciona exactamente 8 variables para entrenar el modelo de árbol."),
-        checkboxGroupInput(
-          inputId = ns("vars_predictoras"),
-          label   = NULL,
-          choices = c(
-            # Variables principales para demostración
-            "score_buro","n_moras_previas","dias_atraso_max","endeudamiento_total",
-            "rfm","antiguedad_cliente","productos_activos","ingreso_verificado",
-            "frecuencia_uso","edad","sexo","estado_civil","nivel_educativo","tipo_vivienda"
-          ),
-          selected = c("score_buro","n_moras_previas","dias_atraso_max","endeudamiento_total",
-                      "rfm","antiguedad_cliente","productos_activos","ingreso_verificado")
+        # Bloque dinámico para modo demo / modo manual
+        uiOutput(ns("vars_block")),
+        tags$hr(),
+        checkboxInput(
+          inputId = ns("demo_auto"),
+          label   = "Usar modo demo (modelo preconfigurado por el equipo)",
+          value   = TRUE
         ),
         tags$hr(),
         tags$strong("Pre-poda (opcional)"),
         tags$small("Deja valores por defecto para provocar un árbol grande y luego podar."),
         numericInput(ns("minsplit"), "minsplit", value = 2, min = 2, max = 50, step = 1),
-        numericInput(ns("maxdepth"), "maxdepth", value = 20, min = 1, max = 30, step = 1),
+        numericInput(ns("maxdepth"), "maxdepth", value = 30, min = 1, max = 30, step = 1),
         numericInput(ns("cp_pre"),   "cp (pre-poda)", value = 0, min = 0, max = 0.05, step = 0.001),
         tags$hr(),
         tags$strong("Variable dependiente"),
