@@ -5,6 +5,17 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
 
   ns <- session$ns
 
+  # --- Wrapper para silenciar toasts en M4 ---
+  quiet_notify <- function(...) {
+    # No-op por defecto; si quieres reactivar toasts de depuración:
+    # options(m4_debug_toasts = TRUE)
+    if (isTRUE(getOption("m4_debug_toasts", FALSE))) {
+      do.call(shiny::showNotification, list(...))
+    } else {
+      invisible(NULL)
+    }
+  }
+
   # -------------------------
   # Estado reactivo del módulo
   # -------------------------
@@ -89,20 +100,23 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     message("[M4_PREPARE] Iniciando preparación de datos históricos con generador M4")
 
     # Siempre usar generador M4 propio (independiente de otros módulos)
-    tryCatch({
-      df <- gen_datos_m4(n = 2000, seed = 101112)
-      showNotification("Datos históricos generados específicamente para M4", type = "info", duration = 3)
-      message(sprintf("[M4_PREPARE] %d observaciones generadas con gen_datos_m4", nrow(df)))
+    # Generación de datos con manejo silencioso de errores (no mostrar toast)
+    datos_hist <- tryCatch({
+      gen_datos_m4(n = 2000, seed = 101112)  # <-- tu función real
     }, error = function(e) {
-      message(sprintf("[M4_PREPARE] ERROR en gen_datos_m4: %s", conditionMessage(e)))
-      showNotification("❌ Error generando datos históricos para M4", type = "error")
-      return(NULL)
+      message("[M4] Error generando datos históricos: ", conditionMessage(e))
+      NULL
     })
+    validate(need(!is.null(datos_hist),
+                  "No se pudo preparar el histórico de M4. Revisa la preparación de datos o vuelve a intentarlo."))
+
+    df <- datos_hist
+    message(sprintf("[M4_PREPARE] %d observaciones generadas con gen_datos_m4", nrow(df)))
 
     # Validaciones básicas (gen_datos_m4 ya produce datos limpios)
     if (nrow(df) < 100) {
       message(sprintf("[M4_PREPARE] ERROR: Datos insuficientes (%d < 100)", nrow(df)))
-      showNotification("Datos insuficientes para M4. Se necesitan al menos 100 observaciones.", type = "error")
+      quiet_notify("Datos insuficientes para M4. Se necesitan al menos 100 observaciones.", type = "error")
       return(NULL)
     }
 
@@ -110,11 +124,11 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     unique_classes <- length(unique(df$alerta_riesgo))
     class_dist <- table(df$alerta_riesgo)
     message(sprintf("[M4_PREPARE] Variable dependiente: %d clases únicas - %s",
-                    unique_classes, paste(names(class_dist), class_dist, sep = "=", collapse = ", ")))
+                   unique_classes, paste(names(class_dist), class_dist, sep = "=", collapse = ", ")))
 
     if (unique_classes < 3) {
       message("[M4_PREPARE] ERROR: Se necesitan las 3 clases de riesgo")
-      showNotification("Error en generación de clases de riesgo.", type = "error")
+      quiet_notify("Error en generación de clases de riesgo.", type = "error")
       return(NULL)
     }
 
@@ -141,7 +155,7 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     # VALIDACIÓN: Verificar que prepare_historic_data retornó datos válidos
     if (is.null(df_hist) || nrow(df_hist) < 100) {
       message("[M4_TRAIN] ERROR: Datos históricos inválidos o insuficientes")
-      showNotification("❌ Error en preparación de datos históricos. Verifica la configuración.", type = "error")
+      quiet_notify("❌ Error en preparación de datos históricos. Verifica la configuración.", type = "error")
       return(NULL)
     }
 
@@ -159,14 +173,14 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     val <- validar_variables(selected_vars)
     if(!val$ok){
       message(sprintf("[M4_TRAIN] ERROR en validación de variables: %s", val$msg))
-      showNotification(val$msg, type = "error")
+      quiet_notify(val$msg, type = "error")
       return(invisible(NULL))
     }
 
     # VALIDACIÓN: Asegurar que tenemos la variable dependiente
     if (!input$var_dependiente %in% names(df_hist)) {
       message(sprintf("[M4_TRAIN] ERROR: Variable dependiente '%s' no encontrada", input$var_dependiente))
-      showNotification(sprintf("Variable dependiente '%s' no encontrada en los datos.", input$var_dependiente), type = "error")
+      quiet_notify(sprintf("Variable dependiente '%s' no encontrada en los datos.", input$var_dependiente), type = "error")
       return(NULL)
     }
 
@@ -180,11 +194,11 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     na_count <- sum(is.na(df_modelo))
     if (na_count > 0) {
       message(sprintf("[M4_TRAIN] WARNING: %d valores NA encontrados, removiendo filas", na_count))
-      showNotification("Hay valores faltantes en el dataset. Limpiando datos...", type = "warning")
+      quiet_notify("Hay valores faltantes en el dataset. Limpiando datos...", type = "warning")
       df_modelo <- na.omit(df_modelo)
       if (nrow(df_modelo) < 100) {
         message(sprintf("[M4_TRAIN] ERROR: Después de remover NA quedan %d filas (< 100)", nrow(df_modelo)))
-        showNotification("Después de remover NAs, quedan muy pocos datos.", type = "error")
+        quiet_notify("Después de remover NAs, quedan muy pocos datos.", type = "error")
         return(NULL)
       }
     }
@@ -212,7 +226,7 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     # VALIDACIÓN: Verificar que tenemos datos en train y test
     if (nrow(rv$train_data) == 0 || nrow(rv$test_data) == 0) {
       message("[M4_TRAIN] ERROR: División train/test fallida")
-      showNotification("Error al dividir datos en train/test.", type = "error")
+      quiet_notify("Error al dividir datos en train/test.", type = "error")
       return(NULL)
     }
 
@@ -225,14 +239,14 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
       )
       if (is.null(rv$tree_model)) {
         message("[M4_TRAIN] ERROR: train_tree retornó NULL")
-        showNotification("❌ Error al entrenar el modelo de árbol.", type = "error")
+        quiet_notify("❌ Error al entrenar el modelo de árbol.", type = "error")
         return(NULL)
       }
 
       # VALIDACIÓN: Verificar que el modelo se entrenó correctamente
       if (is.null(rv$tree_model$frame) || nrow(rv$tree_model$frame) == 0) {
         message("[M4_TRAIN] ERROR: Modelo sin estructura válida")
-        showNotification("❌ El modelo entrenado no tiene estructura válida.", type = "error")
+        quiet_notify("❌ El modelo entrenado no tiene estructura válida.", type = "error")
         return(NULL)
       }
 
@@ -241,13 +255,13 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
       message(sprintf("[M4_TRAIN] Modelo entrenado: %d nodos terminales", n_terminal))
       if (n_terminal == 0) {
         message("[M4_TRAIN] ERROR: Modelo sin nodos terminales")
-        showNotification("❌ El modelo no generó nodos terminales.", type = "error")
+        quiet_notify("❌ El modelo no generó nodos terminales.", type = "error")
         return(NULL)
       }
 
     }, error = function(e) {
       message(sprintf("[M4_TRAIN] ERROR en train_tree: %s", e$message))
-      showNotification(sprintf("❌ Error en train_tree: %s", substr(e$message, 1, 100)), type = "error")
+      quiet_notify(sprintf("❌ Error en train_tree: %s", substr(e$message, 1, 100)), type = "error")
       return(NULL)
     })
 
@@ -270,7 +284,7 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     })
 
     progress$set(value = 1.0, detail = "Completado")
-    showNotification("✅ Modelo entrenado exitosamente. Procede a interpretar los nodos.", type = "message")
+    quiet_notify("✅ Modelo entrenado exitosamente. Procede a interpretar los nodos.", type = "message")
     updateTabsetPanel(session, "tabs", selected = "Interpretación de Nodos")
   })
 
@@ -431,7 +445,7 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
 
     rv$poda_aplicada <- TRUE
 
-    showNotification("Poda aplicada exitosamente con CP óptimo.", type = "message")
+    quiet_notify("Poda aplicada exitosamente con CP óptimo.", type = "message")
   })
 
   # Visualización árbol original
@@ -505,7 +519,7 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     feedback <- paste0("Puntuación: ", score, "/3. ",
                       "Nodos eliminados: ", nodos_eliminados, ".")
 
-    showNotification(feedback, type = "message")
+    quiet_notify(feedback, type = "message")
   })
 
   # -------------------------
@@ -712,7 +726,7 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
       clasificaciones = rv$n3_predictions
     )
 
-    showNotification("Módulo 4 completado y resultados guardados.", type = "message")
+    quiet_notify("Módulo 4 completado y resultados guardados.", type = "message")
   })
 
 }

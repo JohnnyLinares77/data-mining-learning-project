@@ -57,7 +57,12 @@ mod_m4_ui <- function(id){
             tags$ul(
               tags$li(strong("Variable dependiente (multiclase):"), " bajo, medio y alto riesgo."),
               tags$li(strong("Variables predictoras:"), " características del cliente que aportan señales de riesgo."),
-              tags$li(strong("Criterios de división:"), " impureza (p. ej., índice Gini = 1 - ∑ p_k^2, y entropía = -∑ p_k log p_k) y ganancia de información.")
+              tags$li(
+                strong("Criterios de división:"),
+                HTML(" impureza y ganancia de información.<br>
+                     $$\\text{Gini} = 1 - \\sum_{k} p_k^{2} \\qquad
+                     \\text{Entropía} = - \\sum_{k} p_k \\log p_k$$")
+              )
             ),
             br(),
             h4("Variables del modelo"),
