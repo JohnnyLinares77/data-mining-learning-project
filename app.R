@@ -52,6 +52,12 @@ ui <- navbarPage(
   tabPanel("Configuración",
     fluidPage(
       h3("Configuración de Ejecución"),
+
+      h4("Identificación del alumno"),
+      textInput("codigo_pucp", "Código PUCP (8 dígitos)", value = "", width = "200px"),
+      actionButton("validar_codigo", "Validar Código", class = "btn-primary"),
+      uiOutput("codigo_status"),
+      hr(),
       p("Selecciona el modo de ejecución de los módulos:"),
       radioButtons("execution_mode", "Modo de Ejecución:",
                   choices = c("Secuencial (Módulos dependen entre sí)" = "sequential",
@@ -85,9 +91,37 @@ ui <- navbarPage(
 # --------------- Server --------------
 server <- function(input, output, session){
 
+  # --- Estado reactivo para el código PUCP (semilla global) ---
+  seed_rv <- reactiveValues(valid = FALSE, seed = NULL)
+
+  # --- Validación del código PUCP ---
+  observeEvent(input$validar_codigo, {
+    codigo <- input$codigo_pucp
+    if (grepl("^[0-9]{8}$", codigo)) {
+      seed_rv$seed <- as.numeric(codigo)
+      set.seed(seed_rv$seed)
+      seed_rv$valid <- TRUE
+      output$codigo_status <- renderUI({
+        tags$p(style = "color:green;", paste("✔ Código válido. Semilla establecida:", seed_rv$seed))
+      })
+    } else {
+      seed_rv$valid <- FALSE
+      output$codigo_status <- renderUI({
+        tags$p(style = "color:red;", "✗ Código inválido. Debe tener exactamente 8 dígitos numéricos.")
+      })
+    }
+  })
+
+  # --- Bloqueo de pestañas si no hay semilla válida ---
+  observe({
+    shinyjs::toggleState(selector = "a[data-value!='Configuración']", condition = seed_rv$valid)
+  })
+
   # 1) Inicializamos simulación (se comparte entre M1, M2 y M3)
   id_sim     <- paste0("SIM_", format(Sys.time(), "%Y%m%d_%H%M%S"))
-  seed       <- 12345L
+  seed       <- reactive({
+    if (seed_rv$valid && !is.null(seed_rv$seed)) seed_rv$seed else 12345L
+  })
   n_clientes <- 5000L  # Aumentado para mejor performance y más datos después del filtrado
 
   # 2) Estado de configuración
@@ -102,7 +136,10 @@ server <- function(input, output, session){
   # 3) Generación de datos (lista de data.frames) — base común
   #    gen_datos() devuelve: demograficas, financieras, comp_historico,
   #    post_desembolso, simulacion_meta
-  datos <- gen_datos(n_clientes = n_clientes, seed = seed)
+  datos <- reactive({
+    req(seed_rv$valid)
+    gen_datos(n_clientes = n_clientes, seed = seed())
+  })
 
   # 4) Descripción del modo seleccionado
   output$mode_description <- renderUI({
@@ -145,7 +182,6 @@ server <- function(input, output, session){
           p("Ya puedes usar los módulos con el modo seleccionado. Los datos simulados están listos."))
     } else {
       div(class = "alert alert-info",
-          h4("⏳ Configuración Pendiente"),
           p("Haz clic en 'Confirmar Configuración' para habilitar los módulos."))
     }
   })
@@ -183,12 +219,12 @@ server <- function(input, output, session){
   datos_para_m3 <- reactive({
     # Base de cliente (un flat por id_cliente)
     base_cli <- Reduce(function(x, y) merge(x, y, by = "id_cliente", all = TRUE),
-                      list(datos$demograficas, datos$financieras, datos$comp_historico))
+                      list(datos()$demograficas, datos()$financieras, datos()$comp_historico))
 
     # Agregar ofertas históricas si existen (para datos de entrenamiento realistas)
-    if (!is.null(datos$ofertas_historicas) && nrow(datos$ofertas_historicas) > 0) {
+    if (!is.null(datos()$ofertas_historicas) && nrow(datos()$ofertas_historicas) > 0) {
       # Merge con ofertas históricas - cada cliente tendrá múltiples filas (una por oferta histórica)
-      base_cli <- merge(base_cli, datos$ofertas_historicas, by = "id_cliente", all.y = TRUE)
+      base_cli <- merge(base_cli, datos()$ofertas_historicas, by = "id_cliente", all.y = TRUE)
     }
 
     # Traer probabilidades de M2 si ya fueron calculadas (solo score, no p_accept/p_mora)
@@ -238,8 +274,8 @@ server <- function(input, output, session){
     tryCatch({
       # Combinar todos los datos simulados en un solo data.frame
       simulated_data <- Reduce(function(x, y) merge(x, y, by = "id_cliente", all = TRUE),
-                              list(datos$demograficas, datos$financieras,
-                                   datos$comp_historico, datos$post_desembolso))
+                              list(datos()$demograficas, datos()$financieras,
+                                   datos()$comp_historico, datos()$post_desembolso))
 
       # Agregar timestamp
       simulated_data$timestamp <- as.character(Sys.time())
