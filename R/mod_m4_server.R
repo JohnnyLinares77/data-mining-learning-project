@@ -58,7 +58,9 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
 
     # Siempre usar modelo preconfigurado
     if (is.null(rv$vars_demo_selected)) {
-      set.seed(123)
+      if (!is.null(rv$semilla)) {
+        set.seed(rv$semilla)
+      } else set.seed(123)
       k <- min(18, max(12, length(pool)))
       rv$vars_demo_selected <- sample(pool, size = min(k, length(pool)))
     }
@@ -102,7 +104,9 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     # Siempre usar generador M4 propio (independiente de otros módulos)
     # Generación de datos con manejo silencioso de errores (no mostrar toast)
     datos_hist <- tryCatch({
-      gen_datos_m4(n = 2000, seed = 101112)  # <-- tu función real
+      gen_datos_m4(
+        n = 2000,
+        seed = if (!is.null(rv$semilla)) rv$semilla else 101112)
     }, error = function(e) {
       message("[M4] Error generando datos históricos: ", conditionMessage(e))
       NULL
@@ -204,7 +208,9 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
     }
 
     # Dividir en train (80%) y test (20%)
-    set.seed(123)
+    if (!is.null(rv$semilla)) {
+      set.seed(rv$semilla)
+    } else set.seed(123)
     train_idx <- sample(1:nrow(df_modelo), size = 0.8 * nrow(df_modelo))
     rv$train_data <- df_modelo[train_idx, ]
     rv$test_data <- df_modelo[-train_idx, ]
@@ -399,6 +405,30 @@ mod_m4_server <- function(input, output, session, datos_reactivos, id_sim, execu
       p(strong("Número de observaciones:"), node$n),
       p(strong("Regla:"), node$rule)
     )
+    # -------------------------
+    # Validación y propagación de semilla
+    # -------------------------
+    rv$semilla <- NULL
+  
+    observeEvent(input$validar_codigo, {
+      codigo <- trimws(input$codigo_pucp)
+      if (!grepl("^[0-9]{8}$", codigo)) {
+        output$mensaje_codigo <- renderUI({
+          div(class = "alert alert-danger", "El código debe tener exactamente 8 dígitos numéricos.")
+        })
+        shinyjs::hide(id = "main_panel")
+        return()
+      }
+  
+      rv$semilla <- as.numeric(codigo)
+      set.seed(rv$semilla)
+      output$mensaje_codigo <- renderUI({
+        div(class = "alert alert-success", paste("Semilla configurada exitosamente con código", codigo))
+      })
+  
+      # Mostrar el panel principal y ocultar la entrada de código
+      shinyjs::show(id = "main_panel")
+    })
   })
 
   # -------------------------

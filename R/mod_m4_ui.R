@@ -41,6 +41,22 @@ mod_m4_ui <- function(id){
       column(
         width = 9,
         h3("Módulo 4: Árboles de Clasificación"),
+        # --- Bloque de ingreso de código PUCP (semilla obligatoria) ---
+        h4("Ingreso de Código PUCP"),
+        p("Antes de comenzar, ingresa tu código PUCP de 8 dígitos. Este código servirá como semilla para las simulaciones."),
+        textInput(
+          ns("codigo_pucp"),
+          label = "Código PUCP (8 dígitos):",
+          placeholder = "Ejem. 20180917",
+          value = ""
+        ),
+        actionButton(ns("validar_codigo"), "Validar y continuar", class = "btn-success"),
+        uiOutput(ns("mensaje_codigo")),
+        tags$hr(),
+
+        # Bloque principal (se oculta hasta ingresar semilla válida)
+        shinyjs::hidden(
+          div(id = ns("main_panel"),
         tabsetPanel(
           id = ns("tabs"),
 
@@ -291,4 +307,13 @@ mod_m4_ui <- function(id){
       )
     )
   )
+        )
+      )
+    )
+  )
+          ) # cierre del div main_panel
+        ) # cierre del shinyjs::hidden
+      ) # cierre del column derecho
+    ) # cierre del fluidRow
+  ) # cierre del fluidPage
 }
