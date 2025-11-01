@@ -311,9 +311,9 @@ mod_m4_ui <- function(id){
       )
     )
   )
-          ) # cierre del div main_panel
-        ) # cierre del shinyjs::hidden
-      ) # cierre del column derecho
-    ) # cierre del fluidRow
-  ) # cierre del fluidPage
+    ) # cierre del div main_panel
+  ) # cierre del shinyjs::hidden
+ ) # cierre del column derecho
+) # cierre del fluidRow
+) # cierre del fluidPage
 }
